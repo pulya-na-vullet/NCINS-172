@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_048dshj" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.35.0" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.5.0">
+  <bpmn:process id="ump-prepare-documents-ncins-pa" name="Процесс подготовки документов" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1">
+      <bpmn:outgoing>Flow_0wxxwf6</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="service-task-get-params" name="Получить данные по заявке">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="get-application-data" />
+        <zeebe:ioMapping>
+          <zeebe:input source="PREPARE_DOCUMENTS" target="processType" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0wxxwf6</bpmn:incoming>
+      <bpmn:outgoing>Flow_1xzznba</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_0wxxwf6" sourceRef="StartEvent_1" targetRef="service-task-get-params" />
+    <bpmn:sequenceFlow id="Flow_1xzznba" sourceRef="service-task-get-params" targetRef="service-task-get-report-data" />
+    <bpmn:serviceTask id="service-task-update-product" name="Обновить данные по продукту">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="update-product" />
+        <zeebe:ioMapping>
+          <zeebe:input source="AFTER_PREPARE_DOCS" target="productUpdateType" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0m9h4w0</bpmn:incoming>
+      <bpmn:outgoing>Flow_1rpydwn</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Event_16wgp78">
+      <bpmn:incoming>Flow_1rpydwn</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1rpydwn" sourceRef="service-task-update-product" targetRef="Event_16wgp78" />
+    <bpmn:callActivity id="call-activity-ump-generate-and-save-document-pa" name="Формирование и сохранение документа в AlfaCapture">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="ump-generate-and-save-document-pa" propagateAllChildVariables="false" propagateAllParentVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=businessKey" target="serviceId" />
+          <zeebe:input source="=&#34;APPLICATION&#34;" target="serviceCode" />
+          <zeebe:input source="=productCode" target="productCode" />
+          <zeebe:input source="=documents" target="documents" />
+          <zeebe:output source="=result" target="docsResult" />
+          <zeebe:output source="=acRequestId" target="acRequestId" />
+          <zeebe:output source="=acDocuments" target="acDocuments" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0znpfdy</bpmn:incoming>
+      <bpmn:outgoing>Flow_0m9h4w0</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="Flow_0m9h4w0" sourceRef="call-activity-ump-generate-and-save-document-pa" targetRef="service-task-update-product" />
+    <bpmn:serviceTask id="service-task-get-report-data" name="Подготовить данные для ПФ">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ump-prepare-documents-ncins-pa.get-report-data" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1xzznba</bpmn:incoming>
+      <bpmn:outgoing>Flow_0znpfdy</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_0znpfdy" sourceRef="service-task-get-report-data" targetRef="call-activity-ump-generate-and-save-document-pa" />
+  </bpmn:process>
+  <bpmn:error id="Error_120ruzf" name="CreateDocumentError" errorCode="CreateDocumentError" />
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="ump-prepare-documents-ncins-pa">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="182" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0tjjk9r_di" bpmnElement="service-task-get-params">
+        <dc:Bounds x="290" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_16wgp78_di" bpmnElement="Event_16wgp78">
+        <dc:Bounds x="982" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_08ofmwl" bpmnElement="service-task-update-product">
+        <dc:Bounds x="830" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_02m674u" bpmnElement="call-activity-ump-generate-and-save-document-pa">
+        <dc:Bounds x="640" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_00itmjk" bpmnElement="service-task-get-report-data">
+        <dc:Bounds x="460" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_0wxxwf6_di" bpmnElement="Flow_0wxxwf6">
+        <di:waypoint x="218" y="120" />
+        <di:waypoint x="290" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1xzznba_di" bpmnElement="Flow_1xzznba">
+        <di:waypoint x="390" y="120" />
+        <di:waypoint x="460" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1rpydwn_di" bpmnElement="Flow_1rpydwn">
+        <di:waypoint x="930" y="120" />
+        <di:waypoint x="982" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0m9h4w0_di" bpmnElement="Flow_0m9h4w0">
+        <di:waypoint x="740" y="120" />
+        <di:waypoint x="830" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0znpfdy_di" bpmnElement="Flow_0znpfdy">
+        <di:waypoint x="560" y="120" />
+        <di:waypoint x="640" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

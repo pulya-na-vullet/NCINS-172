@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_0g5bd53" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.46.1" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.5.0">
+  <bpmn:process id="ump-delete-documents-ncins-pa" name="Удаление документов по заявке" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1">
+      <bpmn:outgoing>Flow_0b0g240</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="service-task-get-params" name="Получить данные по заявке">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="get-application-data" />
+        <zeebe:ioMapping>
+          <zeebe:input source="DELETE_DOCS" target="processType" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0b0g240</bpmn:incoming>
+      <bpmn:outgoing>Flow_1wl1ghj</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="service-task-delete-documents" name="Удалить документы из АС 1.0">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ump-delete-documents-ncins-pa.delete-documents" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1wl1ghj</bpmn:incoming>
+      <bpmn:outgoing>Flow_1n1gvxu</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=documents" inputElement="document" outputCollection="acDocuments" outputElement="=documentResponse" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_0b0g240" sourceRef="StartEvent_1" targetRef="service-task-get-params" />
+    <bpmn:sequenceFlow id="Flow_1wl1ghj" sourceRef="service-task-get-params" targetRef="service-task-delete-documents" />
+    <bpmn:endEvent id="Event_05tzbfu">
+      <bpmn:incoming>Flow_1n1gvxu</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1n1gvxu" sourceRef="service-task-delete-documents" targetRef="Event_05tzbfu" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="ump-delete-documents-ncins-pa">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="182" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_0my4p3j" bpmnElement="service-task-get-params">
+        <dc:Bounds x="280" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_1s3wkz8" bpmnElement="service-task-delete-documents">
+        <dc:Bounds x="440" y="80" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_05tzbfu_di" bpmnElement="Event_05tzbfu">
+        <dc:Bounds x="622" y="102" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_0b0g240_di" bpmnElement="Flow_0b0g240">
+        <di:waypoint x="218" y="120" />
+        <di:waypoint x="280" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1wl1ghj_di" bpmnElement="Flow_1wl1ghj">
+        <di:waypoint x="380" y="120" />
+        <di:waypoint x="440" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1n1gvxu_di" bpmnElement="Flow_1n1gvxu">
+        <di:waypoint x="540" y="120" />
+        <di:waypoint x="622" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

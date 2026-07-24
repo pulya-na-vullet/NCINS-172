@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_048dshj" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.35.0" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.9.0">
+  <bpmn:process id="ump-payment-ncins-pa" name="Процесс оплаты" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1">
+      <bpmn:outgoing>Flow_0wxxwf6</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="Flow_0wxxwf6" sourceRef="StartEvent_1" targetRef="service-task-get-params" />
+    <bpmn:serviceTask id="service-task-get-params" name="Получить данные по заявке">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="get-application-data" />
+        <zeebe:ioMapping>
+          <zeebe:input source="PAYMENT" target="processType" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0wxxwf6</bpmn:incoming>
+      <bpmn:outgoing>Flow_1ieni1o</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_1ieni1o" sourceRef="service-task-get-params" targetRef="service-task-set-hold" />
+    <bpmn:serviceTask id="service-task-set-hold" name="Установить Hold по счету">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ump-payment-ncins-pa.set-hold" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1ieni1o</bpmn:incoming>
+      <bpmn:outgoing>Flow_1x6xaj2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_1x6xaj2" sourceRef="service-task-set-hold" targetRef="service-task-create-payment" />
+    <bpmn:serviceTask id="service-task-create-payment" name="Создать платежное поручение">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ump-payment-ncins-pa.create-payment" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_1x6xaj2</bpmn:incoming>
+      <bpmn:outgoing>Flow_0dis5mh</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="Event_1mq83p5">
+      <bpmn:incoming>Flow_1911p8b</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_0dis5mh" sourceRef="service-task-create-payment" targetRef="receive-message-payment-finished" />
+    <bpmn:receiveTask id="receive-message-payment-finished" name="Получить сообщение о завершении оплаты" messageRef="Message_06u14sl">
+      <bpmn:incoming>Flow_0dis5mh</bpmn:incoming>
+      <bpmn:outgoing>Flow_1911p8b</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:sequenceFlow id="Flow_1911p8b" sourceRef="receive-message-payment-finished" targetRef="Event_1mq83p5" />
+    <bpmn:subProcess id="Activity_0" name="Завершение процесса по таймауту" triggeredByEvent="true">
+      <bpmn:startEvent id="timer-start-event-process-timeout">
+        <bpmn:outgoing>Flow_0wp5la0</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="TimerEventDefinition_1sn8lde">
+          <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT5M</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:startEvent>
+      <bpmn:endEvent id="Event_16wgp78">
+        <bpmn:extensionElements>
+          <zeebe:ioMapping>
+            <zeebe:output source="=TIMEOUT" target="timeoutMessage" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_0wp5la0</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_0wp5la0" sourceRef="timer-start-event-process-timeout" targetRef="Event_16wgp78" />
+    </bpmn:subProcess>
+  </bpmn:process>
+  <bpmn:message id="Message_06u14sl" name="paymentFinished">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=businessKey + &#34;.&#34; + &#34;NON_CREDIT_INSURANCE&#34;" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="ump-payment-ncins-pa">
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="182" y="302" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_0my4p3j" bpmnElement="service-task-get-params">
+        <dc:Bounds x="290" y="280" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_0geaj5o" bpmnElement="service-task-set-hold">
+        <dc:Bounds x="450" y="280" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="BPMNShape_15xn7u9" bpmnElement="service-task-create-payment">
+        <dc:Bounds x="610" y="280" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_1mq83p5_di" bpmnElement="Event_1mq83p5">
+        <dc:Bounds x="942" y="302" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_04c4v4u_di" bpmnElement="receive-message-payment-finished">
+        <dc:Bounds x="770" y="280" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0msubqe_di" bpmnElement="Activity_0" isExpanded="true">
+        <dc:Bounds x="450" y="80" width="265" height="120" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_0lj64qq_di" bpmnElement="timer-start-event-process-timeout">
+        <dc:Bounds x="490" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="746" y="215" width="84" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_16wgp78_di" bpmnElement="Event_16wgp78">
+        <dc:Bounds x="632" y="142" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_0wp5la0_di" bpmnElement="Flow_0wp5la0">
+        <di:waypoint x="526" y="160" />
+        <di:waypoint x="632" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0wxxwf6_di" bpmnElement="Flow_0wxxwf6">
+        <di:waypoint x="218" y="320" />
+        <di:waypoint x="290" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1ieni1o_di" bpmnElement="Flow_1ieni1o">
+        <di:waypoint x="390" y="320" />
+        <di:waypoint x="450" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1x6xaj2_di" bpmnElement="Flow_1x6xaj2">
+        <di:waypoint x="550" y="320" />
+        <di:waypoint x="610" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0dis5mh_di" bpmnElement="Flow_0dis5mh">
+        <di:waypoint x="710" y="320" />
+        <di:waypoint x="770" y="320" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1911p8b_di" bpmnElement="Flow_1911p8b">
+        <di:waypoint x="870" y="320" />
+        <di:waypoint x="942" y="320" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
