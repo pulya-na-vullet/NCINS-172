@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """Локальные проверки парсинга ответа Confluence search (без сети)."""
 
-from export_user_pages import _page_from_search_result, _user_identity, _cql_user_value, safe_filename
+from export_user_pages import (
+    _page_from_search_result,
+    _user_identity,
+    _cql_user_value,
+    _cql_quote,
+    expand_user_hints,
+    _username_variants,
+    safe_filename,
+)
 
 
 def test_page_from_nested_content():
@@ -38,6 +46,21 @@ def test_identity_and_cql_value():
     assert _cql_user_value(ident2) == "acc"
 
 
+def test_domain_login_expand_and_cql_escape():
+    variants = expand_user_hints([r"MOSCOW\U_M2XNX"])
+    assert r"MOSCOW\U_M2XNX" in variants
+    assert "U_M2XNX" in variants
+    assert "MOSCOW/U_M2XNX" in variants
+
+    quoted = _cql_quote(r"MOSCOW\U_M2XNX")
+    assert quoted == r'"MOSCOW\\U_M2XNX"'
+
+    ident = {"username": r"MOSCOW\U_M2XNX", "userKey": "", "accountId": ""}
+    uv = _username_variants(ident)
+    assert "U_M2XNX" in uv
+    assert r"MOSCOW\U_M2XNX" in uv
+
+
 def test_safe_filename():
     assert "page_9" in safe_filename("???", "9")
     assert "Hello World" in safe_filename("Hello World!", "1")
@@ -47,5 +70,6 @@ if __name__ == "__main__":
     test_page_from_nested_content()
     test_page_skips_non_page()
     test_identity_and_cql_value()
+    test_domain_login_expand_and_cql_escape()
     test_safe_filename()
     print("OK")
