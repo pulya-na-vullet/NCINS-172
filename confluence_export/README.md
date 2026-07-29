@@ -1,62 +1,28 @@
 # Экспорт страниц Confluence по автору
 
-Скрипт находит **все страницы, созданные пользователем**, и сохраняет их в PDF.
-
-## Почему старый скрипт не находил страницы
-
-1. CQL `creator.fullname="ФИО"` на Confluence Server/DC обычно **не работает**. Нужен логин: `creator = "username"`.
-2. Ответ `/rest/api/search` кладёт страницу в `result.content`, а не в корень `result` — из‑за этого `id`/`title` часто пустые.
-3. Сначала нужно **резолвить пользователя** (`/rest/api/user`, `/rest/api/user/search`) и уже потом искать по его `username` / `userKey`.
-
-## Установка
-
-```bash
-cd confluence_export
-pip install -r requirements.txt
-# для html→pdf (если native PDF export недоступен):
-# установить wkhtmltopdf: https://wkhtmltopdf.org/downloads.html
-```
-
 ## Запуск
 
-**Не храните PAT в файле.** Передайте токен через env или CLI.
+1. Откройте `SA_conf_work.py`
+2. В начале файла вставьте PAT в `API_TOKEN = "..."` (тот же, что был в старом скрипте)
+3. Запустите:
 
 ```bash
-# Windows PowerShell
-$env:CONFLUENCE_TOKEN = "ваш_pat"
-$env:CONFLUENCE_USERNAME = "ваш_логин"   # для Server/DC почти всегда нужен
-
-# 1) Сначала только список (без PDF) — проверить, что автор резолвится
-python export_user_pages.py --list-only --user "MOSCOW\U_M2XNX"
-
-# PowerShell: лучше в одинарных кавычках, чтобы \ не съелся
-python export_user_pages.py --list-only --user 'MOSCOW\U_M2XNX'
-
-# 2) Короткий SAM-account тоже ок (скрипт сам развернёт варианты)
-python export_user_pages.py --user U_M2XNX
-
-# 3) Если CQL пустой — медленный, но надёжный обход пространств
-python export_user_pages.py --user 'MOSCOW\U_M2XNX' --fallback-scan
-
-# 4) Обход только известных space key
-python export_user_pages.py --user 'MOSCOW\U_M2XNX' --fallback-scan --spaces SPACE1,SPACE2
+pip install requests pdfkit
+python SA_conf_work.py
 ```
 
-По умолчанию в подсказках уже есть `MOSCOW\U_M2XNX`, `U_M2XNX` и ФИО/email варианты.
+Без аргументов: ищет страницы `MOSCOW\U_M2XNX` / Забарянский и сохраняет PDF в `./confluence_pdfs_Zabaryanskiy`.
 
-Для доменного логина скрипт:
-- ищет и `MOSCOW\U_M2XNX`, и `U_M2XNX`;
-- в CQL экранирует `\`: `creator = "MOSCOW\\U_M2XNX"`.
+Только список:
 
-## Что делает скрипт
+```bash
+python SA_conf_work.py --list-only
+```
 
-1. Резолвит пользователя по логину / ФИО / email.
-2. Ищет `type=page AND creator = "<username>"`, затем `contributor`.
-3. Пишет кеш `confluence_pages_cache_Zabaryanskiy.json` и `pages_index.json`.
-4. Экспортирует PDF:
-   - сначала native Confluence PDF (`/spaces/flyingpdf/...`);
-   - если не вышло — HTML через REST + `pdfkit`/`wkhtmltopdf`.
+Если Bearer не проходит, в начале файла укажите:
 
-## Безопасность
+```python
+USERNAME = r"MOSCOW\U_M2XNX"
+```
 
-PAT из чата лучше **сразу отозвать и выпустить новый** — он был в открытом виде в коде.
+**Не коммитьте PAT в git** — GitHub push protection его блокирует.
