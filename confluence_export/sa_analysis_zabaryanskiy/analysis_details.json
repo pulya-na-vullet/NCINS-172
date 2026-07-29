@@ -1,0 +1,931 @@
+{
+  "summary": {
+    "analyst": "Забарянский Юрий Геннадьевич",
+    "docs_total": 60,
+    "avg_score_work": 4.58,
+    "avg_score_doc": 4.57,
+    "avg_score_overall": 4.57,
+    "critical": 8,
+    "high": 15,
+    "ge8": 3,
+    "le3": 23
+  },
+  "documents": [
+    {
+      "space": "SFACRM",
+      "file": "Некредитное страхование ЮЛ. Требования.pdf",
+      "score_work": 3,
+      "score_doc": 3,
+      "score_overall": 3,
+      "plus": [
+        "Есть привязка к EPIC/NEUROBUS-442",
+        "Обозначена роль модуля как связки SFA↔страхование/Kafka"
+      ],
+      "minus": [
+        "1 страница, ~130 слов — не требования, а черновик",
+        "Опечатки: «двигателем пунктом», «тарнслирует», «предавать»",
+        "Нет сценариев, AC, out-of-scope, НФТ, ошибок",
+        "Формулировки не позволяют стартовать разработку"
+      ],
+      "verdict": "Критический gap: страница «Требования» не является рабочим BRD/FR. Для команды непригодна.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SFACRM",
+      "file": "Некредитное страхование ЮЛ. Системная архитектура.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [
+        "Заведены заголовки процессов (UMP / SFA.CRM)"
+      ],
+      "minus": [
+        "Фактически пусто: только метаданные draw.io/Confluence (true/false/auto/top/размеры)",
+        "Нет потоков, компонентов, очередей, контрактов",
+        "Чек-лист помечает архитектуру как согласованную — риск формального «галочного» согласования"
+      ],
+      "verdict": "Архитектура не документирована текстом. Диаграммы не экспортировались/не описаны.",
+      "po_issue": "critical"
+    },
+    {
+      "space": "SFACRM",
+      "file": "Q3 2026 Чек-лист для доработки Создание Сделок и Интересов....pdf",
+      "score_work": 5,
+      "score_doc": 6,
+      "score_overall": 5,
+      "plus": [
+        "Есть структура чек-листа ЕФ/SFA",
+        "Суть доработки изложена списком работ 1–5",
+        "Ссылки на Vision/модули"
+      ],
+      "minus": [
+        "Большинство пунктов incomplete",
+        "Поля PO/команда пустые",
+        "Статус «архитектура complete» при пустой странице архитектуры — inconsistency",
+        "Нет дат/владельцев по открытым блокам"
+      ],
+      "verdict": "Полезен как трекер готовности, но отражает незакрытый контур и формальные галочки.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SFACRM",
+      "file": "Запись на грумминг SFA CRM.pdf",
+      "score_work": 4,
+      "score_doc": 4,
+      "score_overall": 4,
+      "plus": [
+        "Есть инструкция как записаться на груминг"
+      ],
+      "minus": [
+        "Таблица без явной строки/ссылки на доработку НС ЮЛ в читаемом виде",
+        "Организационная страница, не продуктовая аналитика"
+      ],
+      "verdict": "Процессный артефакт, не доказательство проработанности решения.",
+      "po_issue": "low"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "Модель данных Страхового договора.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Таблица атрибутов с типом/обязательностью/описанием",
+        "Учтены MVP-продукты и каналы SFA/NIB",
+        "Есть ссылки на документы в AlfaCapture"
+      ],
+      "minus": [
+        "Сленг («Айдишник»), опечатка AlfaCatpure",
+        "Часть правил генерации номера — «см. описание» без деталей",
+        "Enums/ограничения значений местами неполные"
+      ],
+      "verdict": "Один из сильных артефактов: можно опираться разработке БД/API.",
+      "po_issue": "low"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "АБ.Страхование POST ump-applications postUmpApplications.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Назначение/метод/адрес",
+        "Разобраны поля тела, комментарии «всегда true/NIB»",
+        "Понятен маппинг к модели договора"
+      ],
+      "minus": [
+        "«Нее обязательный» — качество редактуры",
+        "extAppId: «пока генерим рандомный GUID» без решения по трассировке SFA",
+        "Примеры запроса/ответа в PDF часто не раскрыты"
+      ],
+      "verdict": "Рабочая API-спека уровня MVP, но с временными костылями без плана закрытия.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "АБ.Страхование GET ins-contracts getInscontracts.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Стандартная структура API-страницы"
+      ],
+      "minus": [
+        "Дублирование контента с getInsPrograms (копипаст риск)",
+        "Примеры/ошибки слабо раскрыты в экспорте"
+      ],
+      "verdict": "Средний уровень, требует сверки на копипаст.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "АБ.Страхование GET ins-programs getInsPrograms.pdf",
+      "score_work": 5,
+      "score_doc": 5,
+      "score_overall": 5,
+      "plus": [
+        "Есть каркас API-описания"
+      ],
+      "minus": [
+        "Текст совпадает с getInsContracts — признак копипаста без адаптации",
+        "Риск неверных контрактов для разработки"
+      ],
+      "verdict": "Копипаст соседнего метода снижает доверие к спецификации.",
+      "po_issue": "high"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "АБ.Страхование POST signcms-links postSignCmsLinks.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Описан интеграционный метод подписания"
+      ],
+      "minus": [
+        "Типовые пробелы: коды ошибок/ретраи/идемпотентность"
+      ],
+      "verdict": "Пригодно как черновик интеграции, не как полный контракт.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "АБ.Страхование POST signcreate-operation postSignCreateOperation.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Есть назначение операции создания подписания"
+      ],
+      "minus": [
+        "Не хватает полных error-кейсов и последовательности с callback"
+      ],
+      "verdict": "Средне: нужно добить end-to-end сценарий с callback.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "АБ.Страхование POST ump-applicationslist postUmpApplicationslist.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Описан list-метод"
+      ],
+      "minus": [
+        "Аналогичные редакционные/примерные пробелы семейства API"
+      ],
+      "verdict": "Ок для MVP-списка, без выдающейся проработки.",
+      "po_issue": "low"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "АБ.Страхование POST v1print-formstemplateId postPrintForms.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Есть описание print-forms"
+      ],
+      "minus": [
+        "Нужна явная связь templateId↔DOCUMENT_TEMPLATE"
+      ],
+      "verdict": "Средний уровень.",
+      "po_issue": "low"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "ЕФ.ЮЛ.Страхование GET v1ins-programs getInsurancePrograms.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Отдельный контур ЕФ.ЮЛ"
+      ],
+      "minus": [
+        "Риск расхождения с АБ.Страхование без матрицы соответствия"
+      ],
+      "verdict": "Нужна синхронизация контрактов АБ vs ЕФ.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "ЕФ.ЮЛ.Страхование POST signcallback getSignCallback.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Callback вынесен отдельно — правильно"
+      ],
+      "minus": [
+        "Имя файла getSignCallback при POST — путаница naming",
+        "Нужны статусы/повторы/подписи"
+      ],
+      "verdict": "Важный метод, naming и полнота требуют правки.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "ЕФ.ЮЛ.Страхование POST ump-applications postUmpApplications.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Параллель с АБ-методом"
+      ],
+      "minus": [
+        "Дублирование описаний без явной разницы каналов"
+      ],
+      "verdict": "Средне; нужна матрица «кто кого вызывает».",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "ЕФ.ЮЛ.Страхование POST ump-applicationslist postUmpApplicationslist.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "List-метод для ЕФ"
+      ],
+      "minus": [
+        "Те же риски дублирования"
+      ],
+      "verdict": "Средне.",
+      "po_issue": "low"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "Изменение страховой программы.pdf",
+      "score_work": 4,
+      "score_doc": 4,
+      "score_overall": 4,
+      "plus": [
+        "Есть поля PUT /ins-programs/{id}"
+      ],
+      "minus": [
+        "Ошибка в описании maxDuration: написано «Минимальная сумма страхования»",
+        "Примеры запроса/ответа = заглушки «true»",
+        "Валидация одной фразой без кодов ошибок"
+      ],
+      "verdict": "Опасный дефект спецификации: неверное описание поля уйдёт в реализацию.",
+      "po_issue": "high"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "Получение справочника страховых программ.pdf",
+      "score_work": 5,
+      "score_doc": 5,
+      "score_overall": 5,
+      "plus": [
+        "Тема справочника нужная"
+      ],
+      "minus": [
+        "Тонкая проработка относительно модели данных"
+      ],
+      "verdict": "Базовый уровень.",
+      "po_issue": "low"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "Цифровое страхование Keycloak.pdf",
+      "score_work": 4,
+      "score_doc": 4,
+      "score_overall": 4,
+      "plus": [
+        "Тема безопасности обозначена"
+      ],
+      "minus": [
+        "Мало содержания для security-решения"
+      ],
+      "verdict": "Недостаточно для передачи разработке auth-контура.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "Цифровое страхование VisionРИ.pdf",
+      "score_work": 1,
+      "score_doc": 1,
+      "score_overall": 1,
+      "plus": [],
+      "minus": [
+        "Практически пустая страница (~30 слов)",
+        "Vision как артефакт отсутствует"
+      ],
+      "verdict": "Заглушка. Нельзя ссылаться как на согласованный Vision.",
+      "po_issue": "critical"
+    },
+    {
+      "space": "ECOSYSTEM",
+      "file": "SIgnOnline.pdf",
+      "score_work": 1,
+      "score_doc": 1,
+      "score_overall": 1,
+      "plus": [],
+      "minus": [
+        "Пустая страница",
+        "Опечатка в названии SIgnOnline"
+      ],
+      "verdict": "Мусорный/пустой артефакт в пространстве.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SIGNONLINE",
+      "file": "БП.270 SFA ЮЛ. Страхование Подписание согласия на взимание страховой премии.pdf",
+      "score_work": 8,
+      "score_doc": 8,
+      "score_overall": 8,
+      "plus": [
+        "Есть основной сценарий по шагам",
+        "Разделение ролей заказчик/аналитик SO",
+        "Учтены онлайн/оффлайн ветки",
+        "Указаны методы initSign и параметры AlfaCapture"
+      ],
+      "minus": [
+        "Часть контактов «пока не определено»",
+        "Оффлайн вынесен out of scope без ссылки на целевой БП"
+      ],
+      "verdict": "Один из лучших документов пакета — можно обсуждать на груминге.",
+      "po_issue": "low"
+    },
+    {
+      "space": "DOCFLOW",
+      "file": "NEA Анкета на масштабирование.pdf",
+      "score_work": 5,
+      "score_doc": 5,
+      "score_overall": 5,
+      "plus": [
+        "Заполнена анкета масштабирования"
+      ],
+      "minus": [
+        "Формальный опросник, не продуктовая спецификация"
+      ],
+      "verdict": "Процессный артефакт инфраструктуры.",
+      "po_issue": "low"
+    },
+    {
+      "space": "INTSYS",
+      "file": "Анкета на масштабирование AlfaCaptureЭА.pdf",
+      "score_work": 4,
+      "score_doc": 3,
+      "score_overall": 3,
+      "plus": [
+        "Большой объём данных анкеты"
+      ],
+      "minus": [
+        "170 стр. выгрузки формы — шум для команды продукта",
+        "Не заменяет архитектуру/требования"
+      ],
+      "verdict": "Не использовать как «доказательство проработки» решения НС ЮЛ.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SMP",
+      "file": "Необходимость дедупликации заявок по каналам заведения и продуктам 503b13c001d5.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Живая история изменений",
+        "Справочник канал×продукт×шаблон",
+        "Практическая ценность для платформы"
+      ],
+      "minus": [
+        "Похоже на общую платформенную страницу; вклад конкретно НС ЮЛ нужно явно выделить",
+        "Много версий — риск устаревания без владельца"
+      ],
+      "verdict": "Сильный справочник, но это скорее платформенный актив, не спецификация продукта.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты - Worker ump-finalisation-ncins-pa.pdf",
+      "score_work": 8,
+      "score_doc": 8,
+      "score_overall": 8,
+      "plus": [
+        "Алгоритм шагов finalisation расписан",
+        "ЧПН/вызовы оценены",
+        "Есть пример старта Camunda process",
+        "Указаны интеграции EA ×3"
+      ],
+      "minus": [
+        "Часть прогнозов TBD",
+        "SLA «несколько сек (TBD)»"
+      ],
+      "verdict": "Хороший НТ-артефакт — образец, как должно быть.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты - Worker ump-prepare-documents-ncins-pa.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Есть персонализация под worker"
+      ],
+      "minus": [
+        "Короче finalisation, часть блоков шаблонные"
+      ],
+      "verdict": "Приемлемо.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты - Worker ump-signing-documents-ncins-pa.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Есть описание под worker подписания"
+      ],
+      "minus": [
+        "Неполная детализация относительно finalisation"
+      ],
+      "verdict": "Приемлемо.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты - Worker ump-main-ma-ncins-pa.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Отдельный контур multi-application"
+      ],
+      "minus": [
+        "Нужна явная связь с single ump-main"
+      ],
+      "verdict": "Хорошо как НТ-вход.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты Worker ump-main-ncins-pa.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Идентичен 5 другим «НТ Worker …» файлам (копипаст)",
+        "Имя файла не соответствует содержимому",
+        "Вводит команду в заблуждение по объёму НТ"
+      ],
+      "verdict": "Критичный процессный косяк: фейковая персонализация НТ.",
+      "po_issue": "critical"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты Worker ump-payment-ncins-pa.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Копипаст того же шаблона",
+        "Payment-специфика не раскрыта"
+      ],
+      "verdict": "То же: документ-заглушка под чужим именем.",
+      "po_issue": "critical"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты Worker ump-delete-documents-ncins-pa.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Копипаст",
+        "Delete-сценарий не описан"
+      ],
+      "verdict": "Копипаст НТ.",
+      "po_issue": "critical"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты Worker ump-prepare-documents-ncins-pa.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Копипаст (есть и нормальная версия с «- Worker»)",
+        "Дубль создаёт конфликт источников истины"
+      ],
+      "verdict": "Дублирование + копипаст.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "НТ пререквизиты Worker ump-signing-documents-ncins-pa.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Копипаст"
+      ],
+      "verdict": "Копипаст НТ.",
+      "po_issue": "critical"
+    },
+    {
+      "space": "SMP",
+      "file": "Копия НТ пререквизиты Worker ump-finalisation-ncins-pa.pdf",
+      "score_work": 2,
+      "score_doc": 1,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Прямо названа «Копия»",
+        "Засоряет пространство",
+        "Риск правки не того файла"
+      ],
+      "verdict": "Мусорный дубль.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Получение данных по заявке 9afdb7ddb243.pdf",
+      "score_work": 8,
+      "score_doc": 8,
+      "score_overall": 8,
+      "plus": [
+        "Есть main/alt сценарии 4xx/5xx",
+        "Ретраи на 5xx",
+        "Вход/выход переменных Camunda",
+        "Логирование"
+      ],
+      "minus": [
+        "Маппинг вынесен ссылкой — в PDF не раскрыт полностью"
+      ],
+      "verdict": "Сильный task-level документ.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Получение данных по заявке 52673190544b.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Есть описание task"
+      ],
+      "minus": [
+        "Возможны пересечения/дубли pageId-версий"
+      ],
+      "verdict": "Средне+/хорошо, проверить актуальность vs соседних версий.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Получение данных по заявке 6659e22fa05c.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Структура service task"
+      ],
+      "minus": [
+        "Третья вариация той же задачи — риск рассинхрона"
+      ],
+      "verdict": "Нужна одна актуальная версия.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Подготовить данные для ПФ 2c7e115b68da.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Предметная задача ПФ"
+      ],
+      "minus": [
+        "Нужна явная связь с print-forms API"
+      ],
+      "verdict": "Хорошо.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Обновление данных по продукту 4c1f6d8387a6.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Есть task description"
+      ],
+      "minus": [
+        "Дубль с 990727470585"
+      ],
+      "verdict": "Средне, устранить дубли page versions.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Обновление данных по продукту 990727470585.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Есть task description"
+      ],
+      "minus": [
+        "Дубль"
+      ],
+      "verdict": "Средне.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Сохранить документы в ЭА d64780292399.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Важный шаг EA"
+      ],
+      "minus": [
+        "Проверить stopInIncident/ретраи единообразие с finalisation"
+      ],
+      "verdict": "Хорошо.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "Service Task Удалить документы из АС 1.0 23bd996b63ce.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Delete path описан"
+      ],
+      "minus": [
+        "Коротко относительно рисков удаления"
+      ],
+      "verdict": "Средне+.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "DOCUMENT_TEMPLATE Справочник документов 01020bcb1362.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Справочник шаблонов документов"
+      ],
+      "minus": [
+        "Нужна трассировка к print-forms/AlfaCapture"
+      ],
+      "verdict": "Полезный справочник.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "Канал заведения заявки 8249782cca8a.pdf",
+      "score_work": 6,
+      "score_doc": 6,
+      "score_overall": 6,
+      "plus": [
+        "Каналы зафиксированы"
+      ],
+      "minus": [
+        "Мало контекста product-specific правил НС"
+      ],
+      "verdict": "Средне.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "Процессы-обработчики по продуктам 60189cad51f8.pdf",
+      "score_work": 7,
+      "score_doc": 7,
+      "score_overall": 7,
+      "plus": [
+        "Карта process handlers"
+      ],
+      "minus": [
+        "Проверить актуальность кодов НС"
+      ],
+      "verdict": "Полезно для навигации.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "Call Activity Процесс подписания документов d585acccc043.pdf",
+      "score_work": 3,
+      "score_doc": 3,
+      "score_overall": 3,
+      "plus": [
+        "Есть карточка call activity"
+      ],
+      "minus": [
+        "~100 слов, почти stub",
+        "Мало контракта вызова"
+      ],
+      "verdict": "Недостаточно для реализации.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Call Activity Процесс удаления документов 5b649ff00e0c.pdf",
+      "score_work": 3,
+      "score_doc": 3,
+      "score_overall": 3,
+      "plus": [],
+      "minus": [
+        "Stub + дубль e4c7dd17fb0a"
+      ],
+      "verdict": "Заглушка.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Call Activity Процесс удаления документов e4c7dd17fb0a.pdf",
+      "score_work": 3,
+      "score_doc": 3,
+      "score_overall": 3,
+      "plus": [],
+      "minus": [
+        "Stub/дубль"
+      ],
+      "verdict": "Заглушка.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Call-activity Формирование и сохранение документа в AlfaCapture 5fb1669714b5.pdf",
+      "score_work": 5,
+      "score_doc": 5,
+      "score_overall": 5,
+      "plus": [
+        "Тема AlfaCapture важна"
+      ],
+      "minus": [
+        "Тонкая детализация"
+      ],
+      "verdict": "Средне-.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SMP",
+      "file": "Camunda connector Завершение процесса 51f0a3c5c911.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "~50 слов",
+        "Три одинаковых connector-страницы"
+      ],
+      "verdict": "Пустышка.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Camunda connector Завершение процесса 972e9cb48eb4.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Дубль stub"
+      ],
+      "verdict": "Пустышка.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Camunda connector Завершение процесса edec5d708ded.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Дубль stub"
+      ],
+      "verdict": "Пустышка.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Connector Передать управление. Подписание документов 8fa921613d50.pdf",
+      "score_work": 5,
+      "score_doc": 5,
+      "score_overall": 5,
+      "plus": [
+        "Есть connector на подписание"
+      ],
+      "minus": [
+        "Не хватает полного контракта переменных"
+      ],
+      "verdict": "Средне.",
+      "po_issue": "medium"
+    },
+    {
+      "space": "SMP",
+      "file": "End Event Завершение процесса ab0c5ceb9a7a.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Пустая end-event страница"
+      ],
+      "verdict": "Не несёт аналитической ценности.",
+      "po_issue": "low"
+    },
+    {
+      "space": "SMP",
+      "file": "Timer Start Event Старт процесса завершения заявки по таймер 121353eb1aad.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Stub; 3 копии timer start"
+      ],
+      "verdict": "Нет cron/SLA/условий таймера.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Timer Start Event Старт процесса завершения заявки по таймер 3203e23c5e6a.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Stub/дубль"
+      ],
+      "verdict": "Пустышка.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "Timer Start Event Старт процесса завершения заявки по таймер 4d414ead8b15.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [],
+      "minus": [
+        "Stub/дубль"
+      ],
+      "verdict": "Пустышка.",
+      "po_issue": "high"
+    },
+    {
+      "space": "SMP",
+      "file": "ump-main-ma-ncins-pa Управление процессом мультизаявки по некредитному страхованию.pdf",
+      "score_work": 2,
+      "score_doc": 2,
+      "score_overall": 2,
+      "plus": [
+        "Название процесса важное"
+      ],
+      "minus": [
+        "~60 слов — нет схемы/шагов/переменных"
+      ],
+      "verdict": "Ключевой процесс не описан на своей странице.",
+      "po_issue": "critical"
+    },
+    {
+      "space": "SMP",
+      "file": "ump-delete-documents-ncins-pa-ncins-pa Удаление документов.pdf",
+      "score_work": 1,
+      "score_doc": 1,
+      "score_overall": 1,
+      "plus": [],
+      "minus": [
+        "Почти пусто",
+        "Двойной суффикс ncins-pa в имени — признак хаоса"
+      ],
+      "verdict": "Страница процесса-пустышка.",
+      "po_issue": "critical"
+    }
+  ]
+}

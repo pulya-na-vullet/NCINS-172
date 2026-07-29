@@ -1,7 +1,6 @@
 confluence_pdfs_*/
 confluence_pages_cache_*.json
 pages_index.json
-sa_yandex_analysis/
 *.pdf
 __pycache__/
 *.pyc
