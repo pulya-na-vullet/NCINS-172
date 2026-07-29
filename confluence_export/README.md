@@ -27,19 +27,26 @@ $env:CONFLUENCE_TOKEN = "ваш_pat"
 $env:CONFLUENCE_USERNAME = "ваш_логин"   # для Server/DC почти всегда нужен
 
 # 1) Сначала только список (без PDF) — проверить, что автор резолвится
-python export_user_pages.py --list-only --user Zabaryanskiy --user "Забарянский"
+python export_user_pages.py --list-only --user "MOSCOW\U_M2XNX"
 
-# 2) Если знаете точный логин из профиля Confluence — лучше так
-python export_user_pages.py --user YZabaryanskiy
+# PowerShell: лучше в одинарных кавычках, чтобы \ не съелся
+python export_user_pages.py --list-only --user 'MOSCOW\U_M2XNX'
+
+# 2) Короткий SAM-account тоже ок (скрипт сам развернёт варианты)
+python export_user_pages.py --user U_M2XNX
 
 # 3) Если CQL пустой — медленный, но надёжный обход пространств
-python export_user_pages.py --user YZabaryanskiy --fallback-scan
+python export_user_pages.py --user 'MOSCOW\U_M2XNX' --fallback-scan
 
 # 4) Обход только известных space key
-python export_user_pages.py --user YZabaryanskiy --fallback-scan --spaces SPACE1,SPACE2
+python export_user_pages.py --user 'MOSCOW\U_M2XNX' --fallback-scan --spaces SPACE1,SPACE2
 ```
 
-По умолчанию имена из вашего скрипта уже зашиты как подсказки (`Забарянский…`, `YZabaryanskiy@alfabank.ru` и т.д.).
+По умолчанию в подсказках уже есть `MOSCOW\U_M2XNX`, `U_M2XNX` и ФИО/email варианты.
+
+Для доменного логина скрипт:
+- ищет и `MOSCOW\U_M2XNX`, и `U_M2XNX`;
+- в CQL экранирует `\`: `creator = "MOSCOW\\U_M2XNX"`.
 
 ## Что делает скрипт
 

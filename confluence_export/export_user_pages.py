@@ -108,6 +108,63 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+def expand_user_hints(hints: Iterable[str]) -> List[str]:
+    """
+    Разворачивает доменные логины AD/Windows:
+      MOSCOW\\U_M2XNX → MOSCOW\\U_M2XNX, U_M2XNX, MOSCOW/U_M2XNX, ...
+    """
+    ordered: List[str] = []
+    seen: Set[str] = set()
+
+    def add(value: str) -> None:
+        v = (value or "").strip()
+        if not v or v in seen:
+            return
+        seen.add(v)
+        ordered.append(v)
+
+    for raw in hints:
+        if not raw or not str(raw).strip():
+            continue
+        hint = str(raw).strip()
+        add(hint)
+
+        # DOMAIN\sam / DOMAIN/sam
+        for sep in ("\\", "/"):
+            if sep in hint and not hint.lower().startswith("http"):
+                parts = hint.split(sep)
+                if len(parts) >= 2 and parts[-1]:
+                    domain = parts[0]
+                    sam = parts[-1]
+                    add(sam)
+                    add(f"{domain}\\{sam}")
+                    add(f"{domain}/{sam}")
+                    add(sam.upper())
+                    add(sam.lower())
+                    add(f"{domain.upper()}\\{sam.upper()}")
+                    add(f"{domain.lower()}\\{sam.lower()}")
+
+        if "@" in hint:
+            add(hint.split("@", 1)[0])
+
+    return ordered
+
+
+def _cql_quote(value: str) -> str:
+    """Экранирование строки для CQL (важно для MOSCOW\\USER)."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _username_variants(identity: Dict[str, str]) -> List[str]:
+    """Все разумные формы username для CQL creator/contributor."""
+    raw: List[str] = []
+    for key in ("username", "userKey", "accountId"):
+        if identity.get(key):
+            raw.append(identity[key])
+    return expand_user_hints(raw)
+
+
 def _user_identity(user: Dict[str, Any]) -> Dict[str, str]:
     """Нормализованные идентификаторы пользователя Confluence Server/DC/Cloud."""
     return {
@@ -137,7 +194,7 @@ def resolve_user(
     Пробуем несколько REST-эндпоинтов Server/DC.
     """
     base = base_url.rstrip("/")
-    hints_list = [h for h in hints if h and h.strip()]
+    hints_list = expand_user_hints(hints)
     seen: Set[str] = set()
     candidates: List[Dict[str, Any]] = []
 
@@ -340,23 +397,26 @@ def search_pages_by_user(
     base_url: str,
     identity: Dict[str, str],
 ) -> List[Dict[str, Any]]:
-    """Основной поиск: creator, затем contributor."""
-    user_val = _cql_user_value(identity)
-    if not user_val:
+    """Основной поиск: creator, затем contributor (все варианты DOMAIN\\user)."""
+    variants = _username_variants(identity)
+    if not variants:
         return []
 
-    queries = [
-        f'type=page AND creator = "{user_val}"',
-        f'type=page AND contributor = "{user_val}"',
-    ]
-    # На некоторых инстансах работает userKey
-    if identity.get("userKey") and identity["userKey"] != user_val:
-        queries.append(f'type=page AND creator = "{identity["userKey"]}"')
+    queries: List[str] = []
+    seen_q: Set[str] = set()
+    for user_val in variants:
+        for field in ("creator", "contributor"):
+            q = f"type=page AND {field} = {_cql_quote(user_val)}"
+            if q not in seen_q:
+                seen_q.add(q)
+                queries.append(q)
 
     all_pages: Dict[str, Dict[str, Any]] = {}
     for q in queries:
         for page in search_cql_pages(session, base_url, q):
             all_pages[page["id"]] = page
+        # как только creator что-то нашёл — contributor всё равно добьём,
+        # но не останавливаемся раньше: разные формы логина могут дать разный набор
 
     safe_print(f"📊 Уникальных страниц по CQL: {len(all_pages)}")
     return list(all_pages.values())
@@ -395,13 +455,14 @@ def scan_space_for_creator(
     limit = 50
     matched: List[Dict[str, Any]] = []
     usernames = {
-        _norm(identity.get("username", "")),
-        _norm(identity.get("userKey", "")),
-        _norm(identity.get("accountId", "")),
-        _norm(identity.get("displayName", "")),
-        _norm(identity.get("email", "")),
+        _norm(v)
+        for v in _username_variants(identity)
     }
     usernames.discard("")
+    # также displayName / email из identity
+    for extra in (identity.get("displayName", ""), identity.get("email", "")):
+        if extra:
+            usernames.add(_norm(extra))
     hint_norms = {_norm(h) for h in (title_hints or []) if h}
 
     while True:
@@ -423,11 +484,16 @@ def scan_space_for_creator(
             for content in results:
                 created_by = ((content.get("history") or {}).get("createdBy") or {})
                 cand = {
-                    _norm(created_by.get("username", "")),
-                    _norm(created_by.get("userKey", "")),
-                    _norm(created_by.get("accountId", "")),
-                    _norm(created_by.get("displayName", "")),
-                    _norm(created_by.get("email", "")),
+                    _norm(v)
+                    for v in expand_user_hints(
+                        [
+                            created_by.get("username", ""),
+                            created_by.get("userKey", ""),
+                            created_by.get("accountId", ""),
+                            created_by.get("displayName", ""),
+                            created_by.get("email", ""),
+                        ]
+                    )
                 }
                 cand.discard("")
                 if not (cand & usernames):
@@ -755,6 +821,9 @@ def parse_args() -> argparse.Namespace:
 
 
 DEFAULT_NAME_HINTS = [
+    # Основной логин AD (авторизация в Confluence)
+    r"MOSCOW\U_M2XNX",
+    "U_M2XNX",
     "Забарянский Юрий Геннадьевич",
     "Забарянский Юрий",
     "Забарянский Ю.Г.",
@@ -773,14 +842,18 @@ def main() -> int:
         safe_print("❌ Не задан токен. Укажите --token или env CONFLUENCE_TOKEN")
         return 2
 
-    hints = args.user_hints or DEFAULT_NAME_HINTS
+    hints = expand_user_hints(args.user_hints or DEFAULT_NAME_HINTS)
     verify_ssl = bool(args.ssl_verify)
 
     os.makedirs(args.output, exist_ok=True)
 
     session = build_session(args.url, args.username, args.token, verify_ssl=verify_ssl)
 
-    cache_user_label = hints[0]
+    # Для кеша стабильный ключ: предпочитаем доменный логин, если он есть
+    cache_user_label = next(
+        (h for h in hints if "\\" in h or h.upper().startswith("U_")),
+        hints[0],
+    )
     pages = None if args.force_rescan else load_cache(args.cache, cache_user_label)
 
     if pages is None:
