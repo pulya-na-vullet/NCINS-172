@@ -31,8 +31,19 @@ except ImportError:  # optional until PDF export
 
 # --- КОНФИГУРАЦИЯ (можно просто править здесь и запускать без аргументов) ---
 CONFLUENCE_URL = "https://confluence.moscow.alfaintra.net"
-USERNAME = ""  # пусто = Bearer PAT; если Basic не проходит — укажите r"MOSCOW\U_M2XNX"
-API_TOKEN = ""  # <<< вставьте сюда ваш PAT (как в старом скрипте)
+
+# Авторизация: как в вашем старом скрипте — пустой USERNAME = Bearer PAT.
+# EMAIL в USERNAME часто даёт 401. Если Basic нужен — укажите логин Confluence
+# (например DGrigoryev15), не обязательно email.
+USERNAME = ""
+API_TOKEN = ""  # <<< вставьте PAT локально (в git не коммитить)
+
+# Доп. логины для авто-перебора Basic, если Bearer не подошёл
+AUTH_USERNAME_CANDIDATES = [
+    "DGrigoryev15",
+    "DGrigoryev15@alfabank.ru",
+]
+
 OUTPUT_DIR = "./confluence_pdfs_Zabaryanskiy"
 CACHE_FILE = "./confluence_pages_cache_Zabaryanskiy.json"
 DOWNLOAD_WORKERS = 5
@@ -63,34 +74,93 @@ def safe_print(*args: Any, **kwargs: Any) -> None:
         print(*args, **kwargs)
 
 
+def _apply_auth(session: requests.Session, mode: str, username: str, token: str) -> None:
+    session.auth = None
+    session.headers.pop("Authorization", None)
+    if mode == "bearer":
+        session.headers["Authorization"] = f"Bearer {token}"
+    elif mode == "basic":
+        session.auth = HTTPBasicAuth(username, token)
+    else:
+        raise ValueError(f"unknown auth mode: {mode}")
+
+
 def build_session(
     base_url: str,
     username: str,
     token: str,
     verify_ssl: bool,
 ) -> requests.Session:
+    """
+    Перебирает способы авторизации:
+      1) Bearer PAT (как в старом скрипте с USERNAME="")
+      2) Basic: USERNAME + PAT
+      3) Basic: кандидаты из AUTH_USERNAME_CANDIDATES
+    """
     session = requests.Session()
     session.verify = verify_ssl
     session.headers.update({"Accept": "application/json"})
+    ping_url = f"{base_url.rstrip('/')}/rest/api/space"
+    ping_params = {"limit": 1}
 
-    # Confluence Server/DC: чаще Basic (user + PAT/password).
-    # Cloud / некоторые инсталляции: Bearer PAT.
+    attempts: List[Tuple[str, str, str]] = []
+    # (label, mode, user_for_basic)
+
+    # Сначала то, что явно задано
     if username:
-        session.auth = HTTPBasicAuth(username, token)
+        attempts.append((f"Basic({username})", "basic", username))
+        attempts.append(("Bearer", "bearer", ""))
     else:
-        session.headers["Authorization"] = f"Bearer {token}"
+        attempts.append(("Bearer", "bearer", ""))
 
-    # Быстрая проверка доступности
-    ping = session.get(f"{base_url.rstrip('/')}/rest/api/space", params={"limit": 1}, timeout=30)
-    if ping.status_code not in (200, 401, 403):
-        raise RuntimeError(f"Confluence недоступен: HTTP {ping.status_code} {ping.text[:200]}")
-    if ping.status_code in (401, 403):
-        raise RuntimeError(
-            f"Ошибка авторизации: HTTP {ping.status_code}. "
-            "Проверьте USERNAME/API_TOKEN (для Server/DC обычно нужен логин + PAT)."
-        )
-    safe_print("✅ Сессия создана, API доступен.")
-    return session
+    for cand in AUTH_USERNAME_CANDIDATES:
+        cand = (cand or "").strip()
+        if not cand:
+            continue
+        if username and cand == username:
+            continue
+        attempts.append((f"Basic({cand})", "basic", cand))
+
+    # убрать дубли, сохранив порядок
+    seen: Set[str] = set()
+    uniq_attempts: List[Tuple[str, str, str]] = []
+    for label, mode, user in attempts:
+        key = f"{mode}:{user}"
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq_attempts.append((label, mode, user))
+
+    last_status = None
+    last_body = ""
+    for label, mode, user in uniq_attempts:
+        try:
+            _apply_auth(session, mode, user, token)
+            safe_print(f"🔐 Пробуем авторизацию: {label}")
+            ping = session.get(ping_url, params=ping_params, timeout=30)
+            last_status = ping.status_code
+            last_body = (ping.text or "")[:200]
+            if ping.status_code == 200:
+                safe_print(f"✅ Сессия OK ({label}), API доступен.")
+                return session
+            if ping.status_code in (401, 403):
+                safe_print(f"   ❌ {label}: HTTP {ping.status_code}")
+                continue
+            raise RuntimeError(
+                f"Confluence недоступен: HTTP {ping.status_code} {last_body}"
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            safe_print(f"   ⚠️ {label}: {e}")
+
+    raise RuntimeError(
+        f"Ошибка авторизации: HTTP {last_status}. {last_body}\n"
+        "Что поставить в конфиге:\n"
+        '  1) USERNAME = ""  и API_TOKEN = ваш PAT   (Bearer, как раньше)\n'
+        '  2) или USERNAME = "DGrigoryev15" + тот же PAT (Basic)\n'
+        "Email в USERNAME часто не принимается Confluence Server/DC."
+    )
 
 
 def load_cache(cache_file: str, expected_user: str) -> Optional[List[Dict[str, Any]]]:
