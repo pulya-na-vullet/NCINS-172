@@ -790,7 +790,8 @@ def main() -> int:
     args = parse_args()
     safe_print("🚀 Экспорт страниц Confluence по автору...")
     if not args.token:
-        safe_print("❌ Не задан токен. Пропишите API_TOKEN в начале SA_conf_work.py")
+        safe_print("❌ Не задан токен.")
+        safe_print('   Откройте SA_conf_work.py и вставьте PAT в строку: API_TOKEN = "..."')
         return 2
 
     hints = expand_user_hints(args.user_hints or TARGET_NAMES)
