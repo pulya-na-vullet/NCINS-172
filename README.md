@@ -1,48 +1,39 @@
-# NCINS-143 — проверка флоу UMP (генерация/сохранение документов)
+# NCINS-143 — проверка флоу UMP
 
-Скрипт: `test_ump_ncins_flow.py` (у тебя может лежать как `ump.py`).
+Скрипт: `test_ump_ncins_flow.py` (у тебя может быть `ump.py`).
 
-## Что у тебя только что произошло
-
-1. `--auth ump` → токен лида **взялся нормально** (Шаг 1 OK).
-2. CREATE на `ump-application-facade.*` → **404 nginx**.
-
-Значит: **токен правильный, а внешний URL facade на DEV мы угадали неверно** (сервис с твоей машины по этим host’ам не открыт / другой path).
-
-По комментариям NCINS-143 создание мультизаявки в **НИБе** идёт через **corp-gateway**, не напрямую в facade.
-
-## Что запускать сейчас
+## Рабочая команда (проверено)
 
 ```bash
-pip install -r requirements.txt
-
-# рабочий путь для НИБ (токен разработчика → corp-gateway)
 python ump.py --env dev --auth corporate --channel nib
 ```
 
-Ожидай: CREATE 200/201, в ответе `id` / `number`, `channels` с `nib-corp-ncins`, дальше смотри Operate.
+Рабочий API:
 
-## Два токена (не смешивать)
+`http://corp-gateway-dev.moscow.alfaintra.net/corp-ncins-gateway/secure/corp-ncins-corp-ncins-api`
 
-| Кто | `--auth` | Куда |
-|-----|----------|------|
-| Разработчик (`nib-corp-ncinsurance`) | `corporate` | corp-gateway `/v1/applications` ← **create НИБ** |
-| Лид Яковлев (`nib-corp-ncins`) | `ump` | ump-application-facade `/applications` ← нужен **точный `--base-url` из Postman** |
+- `corp-ncins-acc-gateway` → 403 RBAC (не тот API для этого клиента)
+- `--auth ump` → токен OK, но facade host снаружи 404 без `--base-url` из Postman
 
-UMP-токен в corp-gateway → `401 Jwt issuer is not configured`.  
-UMP-токен на неверный host facade → `404` (твой случай).
+List: тело `{"number": "UMP..."}` (поле `number`).
 
-Если лид даст Postman URL facade:
+## Пример успешного прогона
 
-```bash
-python ump.py --env dev --auth ump --channel nib --base-url "https://ПРАВИЛЬНЫЙ_ХОСТ/ump-application-facade"
-```
+- CREATE OK, `channels = nib-corp-ncins`
+- status после list: `IN_PROGRESS`
+- application id / businessKey, например: `8e14dc1f-7106-4bc3-acc6-6de0789d7c19`
+- number: `UMP26080447676`
 
-## Прочее
+## Дальше руками в Operate
 
-```bash
-python ump.py --env dev --auth ump --token-only   # только проверить токен
-python ump.py --dry-run
-```
+1. http://operate.umpdevwk8sm1.moscow.alfaintra.net/  
+   (если пусто — http://operate.umpqak8sm1.moscow.alfaintra.net/)
+2. Поиск по businessKey = application id
+3. Проверки NCINS-143: дедуп на регистрации, `acDocuments`, `AFTER_PREPARE_DOCS` / `AFTER_SIGNING`, generate-and-save, Kafka
 
-Ручной чеклист Operate (дедуп, `acDocuments`, mappings, Kafka) скрипт печатает после успешного CREATE.
+## Два токена
+
+| `--auth` | Клиент | Куда |
+|----------|--------|------|
+| `corporate` | `nib-corp-ncinsurance` | corp-gateway `/v1/applications` |
+| `ump` | `nib-corp-ncins` | facade `/applications` + `--base-url` |

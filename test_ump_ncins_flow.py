@@ -45,8 +45,14 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 ENVIRONMENTS: dict[str, dict[str, Any]] = {
     "dev": {
-        "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
+        # corp-gateway-dev процессы обычно на umpdev; в задаче также указан umpqa — проверь оба
+        "operate": "http://operate.umpdevwk8sm1.moscow.alfaintra.net/",
+        "operate_alt": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
         "kafka": (
+            "https://akhq.umpdevwk8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
+            "topic/ump.process.to.system/data?sort=Newest&partition=All"
+        ),
+        "kafka_alt": (
             "https://akhq.umpqak8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
             "topic/ump.process.to.system/data?sort=Newest&partition=All"
         ),
@@ -59,18 +65,19 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             ),
             "client_id": "nib-corp-ncinsurance",
             "client_secret": "nib_corp_ncinsurance",
+            # проверено 2026-08-04: corp-ncins-gateway OK; *-acc-* даёт 403 RBAC
             "base_url": (
                 "http://corp-gateway-dev.moscow.alfaintra.net/"
-                "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
             ),
             "base_url_candidates": [
                 (
                     "http://corp-gateway-dev.moscow.alfaintra.net/"
-                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
                 ),
                 (
                     "http://corp-gateway-dev.moscow.alfaintra.net/"
-                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
                 ),
             ],
             "paths": {
@@ -433,26 +440,15 @@ def list_applications(
 
 
 def corp_list_bodies(app_id: str, number: str | None) -> list[dict[str, Any]]:
+    """
+    GetApplicationsUmpPostRequestDto (corp-ncins): рабочее поле — number.
+    Остальные ключи (ids/applicationIds/...) дают 400 Unrecognized field.
+    app_id оставлен в сигнатуре для совместимости вызова.
+    """
+    _ = app_id
     bodies: list[dict[str, Any]] = []
-    if app_id:
-        bodies.extend(
-            [
-                {"ids": [app_id]},
-                {"applicationIds": [app_id]},
-                {"id": app_id},
-                {"applicationId": app_id},
-            ]
-        )
     if number:
-        bodies.extend(
-            [
-                {"numbers": [number]},
-                {"number": number},
-                {"applicationNumber": number},
-                {"applicationNumbers": [number]},
-            ]
-        )
-    bodies.append({})
+        bodies.append({"number": number})
     return bodies
 
 
@@ -541,15 +537,23 @@ def print_json(title: str, data: Any) -> None:
 
 def print_manual_operate_steps(app_id: str, channel: str, env_cfg: dict[str, Any]) -> None:
     expected = "nib-corp-ncins" if channel == "nib" else "sfa-ncins"
+    operate_alt = env_cfg.get("operate_alt")
+    kafka_alt = env_cfg.get("kafka_alt")
+    alt_block = ""
+    if operate_alt:
+        alt_block += f"Operate (alt): {operate_alt}\n"
+    if kafka_alt:
+        alt_block += f"Kafka (alt):   {kafka_alt}\n"
     print(
         f"""
 ========== РУЧНЫЕ ПРОВЕРКИ В OPERATE (скрипт сам это не увидит) ==========
 Operate: {env_cfg['operate']}
 Kafka:   {env_cfg['kafka']}
-businessKey / application id: {app_id}
+{alt_block}businessKey / application id: {app_id}
 Ожидаемый channels[].code: {expected}
 
 1) Найди процесс по businessKey = {app_id}
+   (если нет на первом Operate — открой alt из задачи)
 
 2) «Регистрация заявки» (ump-app-reg-pa)
    → дедупликация должна ИГНОРИРОВАТЬСЯ (повторный create не должен стопорить флоу)
