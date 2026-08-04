@@ -2,38 +2,29 @@
 
 Скрипт: `test_ump_ncins_flow.py` (у тебя может быть `ump.py`).
 
-## Рабочая команда (проверено)
+## Рабочая команда
 
 ```bash
+# создать заявку + channels + list + GET /v1/contracts
 python ump.py --env dev --auth corporate --channel nib
+
+# только договор по уже созданной заявке (Гурин: обязательно)
+python ump.py --env dev --auth corporate --contracts-only \
+  --app-id 8e14dc1f-7106-4bc3-acc6-6de0789d7c19 \
+  --app-number UMP26080447676
 ```
 
-Рабочий API:
+## Контракты (важно)
 
-`http://corp-gateway-dev.moscow.alfaintra.net/corp-ncins-gateway/secure/corp-ncins-corp-ncins-api`
+1. UMP на **финализации** сам делает `POST /v1/ins-contracts` (создать договор в Учёте).
+2. Тестер проверяет снаружи: **`GET /v1/contracts`** — договор отдаётся.
+3. Гурин (@PAGurin): «Да, прям обязательно».
 
-- `corp-ncins-acc-gateway` → 403 RBAC (не тот API для этого клиента)
-- `--auth ump` → токен OK, но facade host снаружи 404 без `--base-url` из Postman
+Перед GET в Operate должен быть Completed **«Процесс финализации заявки»**  
+(`ump-finalisation-ncins-pa`). Если оплаты Canceled — финализация могла не стартовать.
 
-List: тело `{"number": "UMP..."}` (поле `number`).
+## Рабочий create API
 
-## Пример успешного прогона
+`corp-ncins-gateway/.../corp-ncins-corp-ncins-api` (`*-acc-*` на create applications → 403).
 
-- CREATE OK, `channels = nib-corp-ncins`
-- status после list: `IN_PROGRESS`
-- application id / businessKey, например: `8e14dc1f-7106-4bc3-acc6-6de0789d7c19`
-- number: `UMP26080447676`
-
-## Дальше руками в Operate
-
-1. http://operate.umpdevwk8sm1.moscow.alfaintra.net/  
-   (если пусто — http://operate.umpqak8sm1.moscow.alfaintra.net/)
-2. Поиск по businessKey = application id
-3. Проверки NCINS-143: дедуп на регистрации, `acDocuments`, `AFTER_PREPARE_DOCS` / `AFTER_SIGNING`, generate-and-save, Kafka
-
-## Два токена
-
-| `--auth` | Клиент | Куда |
-|----------|--------|------|
-| `corporate` | `nib-corp-ncinsurance` | corp-gateway `/v1/applications` |
-| `ump` | `nib-corp-ncins` | facade `/applications` + `--base-url` |
+Для contracts скрипт сначала пробует **acc-gateway**.

@@ -84,7 +84,19 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
                 "create": "/v1/applications",
                 "list": "/v1/applications/list",
                 "get": "/v1/applications/{id}",
+                "contracts": "/v1/contracts",
             },
+            # GET /v1/contracts — Учёт (acc). Гурин: обязательно после завершения процессов UMP
+            "contract_base_url_candidates": [
+                (
+                    "http://corp-gateway-dev.moscow.alfaintra.net/"
+                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                ),
+                (
+                    "http://corp-gateway-dev.moscow.alfaintra.net/"
+                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                ),
+            ],
             "can_list": True,
             "verify_ssl": True,
         },
@@ -152,7 +164,18 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
                 "create": "/v1/applications",
                 "list": "/v1/applications/list",
                 "get": "/v1/applications/{id}",
+                "contracts": "/v1/contracts",
             },
+            "contract_base_url_candidates": [
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                ),
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                ),
+            ],
             "can_list": True,
             "verify_ssl": True,
         },
@@ -213,7 +236,18 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
                 "create": "/v1/applications",
                 "list": "/v1/applications/list",
                 "get": "/v1/applications/{id}",
+                "contracts": "/v1/contracts",
             },
+            "contract_base_url_candidates": [
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                ),
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                ),
+            ],
             "can_list": True,
             "verify_ssl": True,
         },
@@ -452,6 +486,109 @@ def corp_list_bodies(app_id: str, number: str | None) -> list[dict[str, Any]]:
     return bodies
 
 
+def try_get_contracts(
+    auth_cfg: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    app_id: str,
+    number: str | None,
+    inn: str = "7826688577",
+) -> tuple[dict[str, Any] | list[Any] | None, list[str]]:
+    """
+    GET /v1/contracts — проверка, что после финализации UMP договор появился в Учёте.
+    (Гурин @PAGurin: обязательно тестануть, даже если не было в тексте задачи.)
+
+    UMP сам пишет договор через POST /v1/ins-contracts на финализации;
+    GET /v1/contracts — проверка снаружи, что контракт отдаётся.
+    """
+    attempts: list[str] = []
+    verify = auth_cfg.get("verify_ssl", True)
+    path = auth_cfg.get("paths", {}).get("contracts", "/v1/contracts")
+
+    bases: list[str] = []
+    for b in auth_cfg.get("contract_base_url_candidates") or []:
+        if b not in bases:
+            bases.append(b)
+    # fallback: тот же base, где create
+    if auth_cfg.get("base_url") and auth_cfg["base_url"] not in bases:
+        bases.append(auth_cfg["base_url"])
+
+    param_variants: list[dict[str, str]] = []
+    if app_id:
+        param_variants.extend(
+            [
+                {"applicationId": app_id},
+                {"applicationIds": app_id},
+                {"id": app_id},
+            ]
+        )
+    if number:
+        param_variants.extend(
+            [
+                {"number": number},
+                {"applicationNumber": number},
+                {"contractNumber": number},
+            ]
+        )
+    if inn:
+        param_variants.append({"inn": inn})
+    param_variants.append({})
+
+    for base in bases:
+        url = f"{base.rstrip('/')}{path}"
+        for params in param_variants:
+            try:
+                resp = requests.get(
+                    url, headers=headers, params=params, timeout=60, verify=verify
+                )
+            except requests.RequestException as exc:
+                attempts.append(f"GET network {url} params={params} -> {exc}")
+                continue
+            detail = f"GET {resp.status_code} {url} params={params}"
+            if resp.status_code >= 400:
+                attempts.append(f"{detail} -> {resp.text[:300]}")
+                continue
+            try:
+                data = resp.json()
+            except ValueError:
+                attempts.append(f"{detail} -> non-json: {resp.text[:200]}")
+                continue
+            attempts.append(f"{detail} OK")
+            return data, attempts
+
+    return None, attempts
+
+
+def contract_looks_present(data: Any, app_id: str) -> tuple[bool, str]:
+    """Грубая эвристика: ответ не пустой / есть id / есть ссылка на applicationId."""
+    if data is None:
+        return False, "пустой ответ"
+    if isinstance(data, list):
+        if not data:
+            return False, "пустой список"
+        return True, f"список из {len(data)} элемент(ов)"
+    if isinstance(data, dict):
+        # типичные обёртки
+        for key in ("list", "contracts", "content", "items", "data"):
+            val = data.get(key)
+            if isinstance(val, list):
+                if not val:
+                    return False, f"{key}=[]"
+                return True, f"{key} len={len(val)}"
+        if data.get("id") or data.get("contractId") or data.get("contractNumber"):
+            return True, "есть id/contractNumber в объекте"
+        # иногда возвращают faults
+        if data.get("failures") and not any(
+            data.get(k) for k in ("id", "contractId", "list", "contracts")
+        ):
+            return False, f"failures={data.get('failures')}"
+        # не пустой dict — считаем WARN-уровнем успеха (разберём глазами)
+        if data:
+            app_hit = app_id and app_id in json.dumps(data, ensure_ascii=False)
+            return True, ("applicationId найден в JSON" if app_hit else "непустой JSON-объект")
+    return False, f"неожиданный тип {type(data)}"
+
+
 def ump_list_bodies(number: str | None) -> list[dict[str, Any]]:
     bodies: list[dict[str, Any]] = []
     if number:
@@ -606,10 +743,33 @@ def main() -> int:
     )
     parser.add_argument("--skip-create", action="store_true")
     parser.add_argument("--skip-get", action="store_true")
+    parser.add_argument(
+        "--check-contracts",
+        action="store_true",
+        help="Явно включить GET /v1/contracts (и так включено по умолчанию)",
+    )
+    parser.add_argument(
+        "--no-check-contracts",
+        action="store_true",
+        help="Не вызывать GET /v1/contracts",
+    )
+    parser.add_argument(
+        "--contracts-only",
+        action="store_true",
+        help="Только токен + GET /v1/contracts (нужен --app-id, опционально --app-number)",
+    )
     parser.add_argument("--app-id", default="")
     parser.add_argument("--app-number", default="")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    args.check_contracts = not args.no_check_contracts
+    if args.contracts_only:
+        args.skip_create = True
+        args.skip_get = True
+        args.check_contracts = True
+        if not args.app_id:
+            print("--contracts-only требует --app-id", file=sys.stderr)
+            return 2
 
     cl = Checklist()
     env_cfg = ENVIRONMENTS[args.env]
@@ -825,7 +985,64 @@ API base:  {auth_cfg['base_url']}
                         f"ожидали {expected_channel}, получили {channels}",
                     )
 
-    # --- 5. Ручные проверки NCINS-143 ---
+    # --- 5. GET /v1/contracts (обязательно по словам Гурина) ---
+    print("\n--- ШАГ 5. GET /v1/contracts (договор после финализации UMP) ---")
+    print(
+        "UMP на финализации делает POST /v1/ins-contracts.\n"
+        "Мы проверяем снаружи: GET /v1/contracts отдаёт договор.\n"
+        "Сначала в Operate должен быть Completed «Процесс финализации заявки»."
+    )
+    if not args.check_contracts:
+        cl.add("GET /v1/contracts", "SKIP", "--no-check-contracts")
+    elif args.auth != "corporate":
+        cl.add(
+            "GET /v1/contracts",
+            "WARN",
+            "для contracts нужен --auth corporate (corp-gateway Учёт); сейчас auth=ump",
+        )
+    else:
+        # для contracts предпочтительно ходить в acc-gateway кандидаты
+        contract_cfg = dict(auth_cfg)
+        data, attempts = try_get_contracts(
+            contract_cfg,
+            headers,
+            app_id=app_id,
+            number=app_number,
+        )
+        for line in attempts:
+            print(f"  try: {line}")
+        if data is None:
+            cl.add(
+                "GET /v1/contracts",
+                "FAIL",
+                "не удалось получить договор — дождись финализации в Operate "
+                "или уточни у Гурина точный path/query",
+            )
+            print(
+                "\nПодсказка curl (подставь TOKEN):\n"
+                f"  curl -s -H \"Authorization: Bearer $TOKEN\" \\\n"
+                f"    -H \"A-userId: 123456\" -H \"A-customerId: U_M2XNX\" \\\n"
+                f"    -H \"A-clientType: UL\" -H \"A-channelId: NIB\" \\\n"
+                f"    \"http://corp-gateway-dev.moscow.alfaintra.net/"
+                f"corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                f"/v1/contracts?applicationId={app_id}\"\n"
+            )
+        else:
+            print_json("GET /v1/contracts response", data)
+            ok, detail = contract_looks_present(data, app_id)
+            cl.add(
+                "GET /v1/contracts",
+                "PASS" if ok else "WARN",
+                detail,
+            )
+
+    if args.contracts_only:
+        print(
+            f"\n--contracts-only. application id = {app_id}, number = {app_number or '(нет)'}"
+        )
+        return cl.print_summary()
+
+    # --- 6. Ручные проверки NCINS-143 ---
     print_manual_operate_steps(app_id, args.channel, env_cfg)
     cl.add(
         "Operate: дедупликация на регистрации игнорируется",
@@ -843,9 +1060,9 @@ API base:  {auth_cfg['base_url']}
         "prepare + signing service-task-update-product",
     )
     cl.add(
-        "Operate: дойти до /v1/ins-contracts (generate-and-save)",
+        "Operate: финализация → POST /v1/ins-contracts",
         "MANUAL",
-        "ump-generate-and-save-document-pa / финализация",
+        "ump-finalisation-ncins-pa шаг «Создать договор» Completed",
     )
     cl.add(
         "Kafka: ump.process.to.system по заявке",
@@ -859,6 +1076,11 @@ API base:  {auth_cfg['base_url']}
         f"  number         = {app_number or '(нет)'}\n"
         f"  Operate        = {env_cfg['operate']}\n"
         f"  businessKey    = {app_id}\n"
+        f"\nПовторно проверить договор:\n"
+        f"  python ump.py --env {args.env} --auth corporate --contracts-only "
+        f"--app-id {app_id}"
+        + (f" --app-number {app_number}" if app_number else "")
+        + "\n"
     )
     return cl.print_summary()
 
