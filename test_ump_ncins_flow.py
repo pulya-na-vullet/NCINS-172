@@ -2,22 +2,23 @@
 """
 NCINS / UMP E2E helper для NIB.
 
-Два способа авторизации:
-  1) --auth ump        Keycloak UMP, client_id=nib-corp-ncins
-                       доступы: POST /applications, POST /applications/list
-                       (на TEST list может быть закрыт)
-  2) --auth corporate  Keycloak corporate (curl от лида),
-                       client_id=nib-corp-ncinsurance → corp-gateway
+Важно: токен и API должны быть из одной системы.
+  - corporate JWT  → corp-gateway (corp-ncins-*-api)     ✅ уже работало у тебя
+  - UMP Keycloak JWT → ump-application-facade           ❌ нельзя слать в corp-gateway
+    (иначе 401 Jwt issuer is not configured)
 
-GET /applications/{id} у NIB НЕТ в правах → будет 403 RBAC.
-Читаем заявку через POST /applications/list (фильтр по number / pin / inn).
+Два режима:
+  1) --auth corporate  (по умолчанию) curl лида → corp-gateway /v1/applications
+  2) --auth ump        Keycloak UMP nib-corp-ncins → application-facade /applications
+                       DEV/QA: + POST /applications/list; TEST: create only
+
+GET /applications/{id} у NIB нет в правах → 403. Читаем через list.
 
 Примеры:
-  python test_ump_ncins_flow.py --env dev --auth ump --channel nib
-  python test_ump_ncins_flow.py --env qa --auth ump --channel nib
-  python test_ump_ncins_flow.py --env test --auth corporate --channel nib
-  python test_ump_ncins_flow.py --env dev --auth ump --skip-get
-  python test_ump_ncins_flow.py --dry-run
+  python ump.py --env dev --auth corporate --channel nib
+  python ump.py --env dev --auth ump --channel nib
+  python ump.py --env dev --auth ump --base-url http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net
+  python ump.py --dry-run
 """
 
 from __future__ import annotations
@@ -63,28 +64,29 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "verify_ssl": True,
         },
         "ump": {
-            # НИБ пользователи Keycloak в UMP / DEV
+            # НИБ Keycloak UMP / DEV — токен ТОЛЬКО для application-facade, не для corp-gateway
             "token_url": (
                 "https://keycloak.umpdevwk8sm1.moscow.alfaintra.net/"
                 "realms/ump/protocol/openid-connect/token"
             ),
             "client_id": "nib-corp-ncins",
             "client_secret": "OlcnSVnz3UiORtl4XfJZ3NRRZlqw7QPY",
-            # тот же corp-proxy; при необходимости --base-url на facade
-            "base_url": (
-                "http://corp-gateway-dev.moscow.alfaintra.net/"
-                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
-            ),
+            "base_url": "http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
+            # если host другой — передай --base-url (из Postman / Confluence)
+            "base_url_candidates": [
+                "http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
+                "https://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
+                "http://umpdevwk8sm1.moscow.alfaintra.net/ump-application-facade",
+                "https://umpdevwk8sm1.moscow.alfaintra.net/ump-application-facade",
+            ],
+            # контракт facade: /applications (без /v1)
             "paths": {
-                "create": "/v1/applications",
-                "list": "/v1/applications/list",
-                "get": "/v1/applications/{id}",
-                # fallback на контракт facade без /v1
-                "create_alt": "/applications",
-                "list_alt": "/applications/list",
+                "create": "/applications",
+                "list": "/applications/list",
+                "get": "/applications/{id}",
             },
             "can_list": True,
-            "verify_ssl": False,  # curl -k
+            "verify_ssl": False,
         },
         "sfa_base_url": "https://dev.ufrulkint-api.moscow.alfaintra.net/ufr-eos-ul-ncins-core-api",
     },
@@ -114,23 +116,23 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "verify_ssl": True,
         },
         "ump": {
-            # НИБ пользователи Keycloak в UMP / QA
             "token_url": (
                 "https://keycloak.umpqak8sm1.moscow.alfaintra.net/"
                 "realms/ump/protocol/openid-connect/token"
             ),
             "client_id": "nib-corp-ncins",
             "client_secret": "DRcjLK7ZeFSy4P0A7fPuZrD1ppXccxd0",
-            "base_url": (
-                "http://corp-gateway-test.moscow.alfaintra.net/"
-                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
-            ),
+            "base_url": "http://ump-application-facade.umpqak8sm1.moscow.alfaintra.net",
+            "base_url_candidates": [
+                "http://ump-application-facade.umpqak8sm1.moscow.alfaintra.net",
+                "https://ump-application-facade.umpqak8sm1.moscow.alfaintra.net",
+                "http://umpqak8sm1.moscow.alfaintra.net/ump-application-facade",
+                "https://umpqak8sm1.moscow.alfaintra.net/ump-application-facade",
+            ],
             "paths": {
-                "create": "/v1/applications",
-                "list": "/v1/applications/list",
-                "get": "/v1/applications/{id}",
-                "create_alt": "/applications",
-                "list_alt": "/applications/list",
+                "create": "/applications",
+                "list": "/applications/list",
+                "get": "/applications/{id}",
             },
             "can_list": True,
             "verify_ssl": False,
@@ -164,23 +166,21 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "verify_ssl": True,
         },
         "ump": {
-            # НИБ пользователи Keycloak в UMP / TEST — только POST /applications
+            # TEST: только POST /applications
             "token_url": (
                 "https://idp-api-test.alfaintra.net/auth/realms/ump/"
                 "protocol/openid-connect/token"
             ),
             "client_id": "nib-corp-ncins",
             "client_secret": "wcpWehuLXKRWwMYE17EXvg9ShCQ7Rovc",
-            "base_url": (
-                "http://corp-gateway-test.moscow.alfaintra.net/"
-                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
-            ),
+            "base_url": "https://ump.alfabank.ru/ump-application-facade",
+            "base_url_candidates": [
+                "https://ump.alfabank.ru/ump-application-facade",
+            ],
             "paths": {
-                "create": "/v1/applications",
-                "list": "/v1/applications/list",
-                "get": "/v1/applications/{id}",
-                "create_alt": "/applications",
-                "list_alt": "/applications/list",
+                "create": "/applications",
+                "list": "/applications/list",
+                "get": "/applications/{id}",
             },
             "can_list": False,
             "verify_ssl": False,
@@ -529,16 +529,18 @@ businessKey / application id: {app_id}
 def print_auth_help() -> None:
     print(
         """
-=== Авторизация NIB ===
-UMP Keycloak (рекомендуется для UMP API):
-  DEV  client_id=nib-corp-ncins  -> POST /applications, POST /applications/list
-  QA   client_id=nib-corp-ncins  -> POST /applications, POST /applications/list
-  TEST client_id=nib-corp-ncins  -> POST /applications  (list НЕТ)
+=== Авторизация NIB (не смешивай токен и API) ===
+corporate JWT  →  corp-gateway /v1/applications
+  --auth corporate  client_id=nib-corp-ncinsurance  (curl от лида)
+  Это рабочий путь для создания заявки через NIB proxy.
 
-Corporate (curl от лида) — для corp-gateway:
-  client_id=nib-corp-ncinsurance / client_secret=nib_corp_ncinsurance
+UMP Keycloak JWT  →  ump-application-facade /applications
+  --auth ump  client_id=nib-corp-ncins
+  DEV/QA: POST /applications + POST /applications/list
+  TEST: только POST /applications
+  НЕ слать UMP-токен в corp-gateway → 401 Jwt issuer is not configured
 
-GET /applications/{id} у NIB нет в правах → 403 RBAC — это ожидаемо.
+GET /applications/{id} у NIB нет → 403 RBAC (ожидаемо). Читай через list.
 """
     )
 
@@ -549,8 +551,8 @@ def main() -> int:
     parser.add_argument(
         "--auth",
         choices=["ump", "corporate"],
-        default="ump",
-        help="ump = Keycloak UMP nib-corp-ncins; corporate = curl от лида",
+        default="corporate",
+        help="corporate = curl лида → corp-gateway (по умолчанию); ump = Keycloak UMP → facade",
     )
     parser.add_argument("--channel", choices=["nib", "sfa"], default="nib")
     parser.add_argument("--client-id", default="", help="Override client_id")
@@ -644,30 +646,52 @@ def main() -> int:
         app = {"id": app_id, "number": app_number}
     else:
         create_path = auth_cfg["paths"]["create"]
-        print(
-            f"\nCREATE {auth_cfg['base_url']}{create_path}"
-            f"?finalVersion=true&fullCreate=true"
-        )
-        try:
-            created = create_application(
-                auth_cfg["base_url"],
-                create_path,
-                headers,
-                payload,
-                verify_ssl=verify,
+        bases: list[str] = []
+        if args.base_url:
+            bases = [args.base_url]
+        else:
+            bases = [auth_cfg["base_url"]]
+            for cand in auth_cfg.get("base_url_candidates") or []:
+                if cand not in bases:
+                    bases.append(cand)
+
+        created: dict[str, Any] | None = None
+        last_error: Exception | None = None
+        for base in bases:
+            auth_cfg["base_url"] = base
+            print(
+                f"\nCREATE {base}{create_path}?finalVersion=true&fullCreate=true"
             )
-        except RuntimeError as exc:
-            # fallback на /applications без /v1 (контракт facade)
-            alt = auth_cfg["paths"].get("create_alt")
-            if not alt:
-                raise
-            print(f"CREATE /v1 не прошёл ({exc}); пробую {alt}")
-            created = create_application(
-                auth_cfg["base_url"],
-                alt,
-                headers,
-                payload,
-                verify_ssl=verify,
+            try:
+                created = create_application(
+                    base,
+                    create_path,
+                    headers,
+                    payload,
+                    verify_ssl=verify,
+                )
+                break
+            except RuntimeError as exc:
+                last_error = exc
+                err = str(exc)
+                print(f"  -> {exc}")
+                if "Jwt issuer is not configured" in err:
+                    print(
+                        "  Подсказка: UMP JWT нельзя слать в corp-gateway. "
+                        "Для corp-gateway используй: --auth corporate\n"
+                        "  Для UMP JWT нужен host ump-application-facade "
+                        "(или правильный --base-url из Postman)."
+                    )
+                continue
+            except requests.RequestException as exc:
+                last_error = RuntimeError(f"network: {exc}")
+                print(f"  -> network error: {exc}")
+                continue
+
+        if created is None:
+            raise RuntimeError(
+                f"CREATE не удался на всех base_url. Последняя ошибка: {last_error}\n"
+                f"Рабочий вариант: python ump.py --env {args.env} --auth corporate --channel nib"
             )
 
         print_json("CREATE response", created)
