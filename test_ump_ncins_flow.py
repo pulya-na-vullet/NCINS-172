@@ -690,8 +690,8 @@ def write_kafka_payment_finished(
     out_dir: str = ".",
 ) -> tuple[dict[str, Any], str]:
     """
-    Сформировать JSON paymentFinished и сохранить в файл.
-    Процесс оплаты ждёт его в Kafka (ump.process.to.system), таймаут PT5M.
+    Сформировать JSON paymentFinished, сохранить в файл и вывести в консоль
+    блоком, который можно копировать 1-в-1 в Kafka Produce.
     """
     payload = build_payment_finished_payload(app_id)
     out_path = f"{out_dir.rstrip('/')}/paymentFinished_{app_id}.json"
@@ -699,22 +699,36 @@ def write_kafka_payment_finished(
         json.dump(payload, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
 
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
     print(
         f"""
-========== KAFKA: paymentFinished (сформировано тестом) ==========
+!!!!!!!!!! СКОПИРУЙ ЭТОТ JSON В KAFKA PRODUCE !!!!!!!!!!
 Топик: ump.process.to.system
 UI:    {env_cfg.get('kafka')}
 {('UI alt: ' + env_cfg['kafka_alt']) if env_cfg.get('kafka_alt') else ''}
 Файл:  {out_path}
+Успей за ~5 минут (PT5M), иначе оплата Canceled.
 
-ВАЖНО: отправь в Produce за ~5 минут (PT5M), иначе оплата Canceled.
-
-JSON:
+----- НАЧАЛО JSON (копируй строго между линиями) -----
+{body}
+----- КОНЕЦ JSON -----
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 """
     )
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
-    print()
     return payload, out_path
+
+
+def print_copy_payment_finished_again(app_id: str) -> None:
+    """Повтор чистого JSON в самом конце прогона — удобно копировать."""
+    body = json.dumps(build_payment_finished_payload(app_id), ensure_ascii=False, indent=2)
+    print(
+        f"""
+========== ЕЩЁ РАЗ: JSON ДЛЯ KAFKA (скопируй целиком) ==========
+Топик: ump.process.to.system
+
+{body}
+"""
+    )
 
 
 def print_manual_operate_steps(app_id: str, channel: str, env_cfg: dict[str, Any]) -> None:
@@ -1062,12 +1076,21 @@ API base:  {auth_cfg['base_url']}
         for line in attempts:
             print(f"  try: {line}")
         if data is None:
-            cl.add(
-                "GET /v1/contracts",
-                "FAIL",
-                "не удалось получить договор — дождись финализации в Operate "
-                "или уточни у Гурина точный path/query",
-            )
+            # 403 RBAC сразу после create — нормально: либо нет прав GET, либо рано
+            rbac = any("403" in a and "RBAC" in a for a in attempts)
+            if rbac and not args.contracts_only:
+                cl.add(
+                    "GET /v1/contracts",
+                    "WARN",
+                    "403 RBAC / ещё рано — сначала paymentFinished → финализация, "
+                    "потом --contracts-only; уточни у Гурина права/path",
+                )
+            else:
+                cl.add(
+                    "GET /v1/contracts",
+                    "FAIL" if args.contracts_only else "WARN",
+                    "не удалось получить договор — дождись финализации / уточни path у Гурина",
+                )
             print(
                 "\nПодсказка curl (подставь TOKEN):\n"
                 f"  curl -s -H \"Authorization: Bearer $TOKEN\" \\\n"
@@ -1142,6 +1165,8 @@ API base:  {auth_cfg['base_url']}
         + (f" --app-number {app_number}" if app_number else "")
         + "\n"
     )
+    # В самом конце — ещё раз чистый JSON, чтобы не искать глазами выше
+    print_copy_payment_finished_again(app_id)
     return cl.print_summary()
 
 
