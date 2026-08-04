@@ -3,13 +3,14 @@
 NCINS / UMP E2E helper:
 1) получить token
 2) создать мультизаявку с полным payload (чтобы не было documents=null)
-3) прочитать заявку
-4) напечатать JSON для ручного Start процессов в Camunda
+3) попробовать прочитать заявку (GET часто 403 для service-account — это нормально)
+4) напечатать JSON для ручного Start процессов в Camunda + чеклист Operate
 
 Примеры:
   python test_ump_ncins_flow.py --env dev --channel nib
   python test_ump_ncins_flow.py --env test --channel sfa
   python test_ump_ncins_flow.py --env test --channel nib --skip-create --app-id <uuid>
+  python test_ump_ncins_flow.py --skip-get   # не дергать GET
 """
 
 from __future__ import annotations
@@ -30,7 +31,6 @@ ENVIRONMENTS: dict[str, dict[str, str]] = {
             "http://corp-gateway-dev.moscow.alfaintra.net/"
             "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
         ),
-        # если create идёт через corp-ncins API / proxy — поправь URL под свой Postman
         "create_base_url": (
             "http://corp-gateway-dev.moscow.alfaintra.net/"
             "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
@@ -56,7 +56,7 @@ ENVIRONMENTS: dict[str, dict[str, str]] = {
             "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
         ),
         "sfa_base_url": "https://int.ufrulkint-api.moscow.alfaintra.net/ufr-eos-ul-ncins-core-api",
-        "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",  # уточни INT operate при необходимости
+        "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
         "kafka": (
             "https://akhq.umptech.moscow.alfaintra.net/ui/ump-kafka-cluster/"
             "topic/ump.process.to.system/data?sort=Newest&partition=All"
@@ -77,7 +77,9 @@ def build_create_payload(channel: str) -> dict[str, Any]:
     """Полный payload, чтобы prepare смог собрать documents[] для AlfaCapture."""
     ext_id = str(uuid.uuid4())
     system_code = "NIB" if channel == "nib" else "SFA"
-    sales_channel = system_code
+    doc_link = str(uuid.uuid4())
+    # формат как в stub ump_application_response_200.json
+    dates = "2026-06-25T11:47:13.57Z"
 
     return {
         "externalApplicationIds": [
@@ -94,9 +96,13 @@ def build_create_payload(channel: str) -> dict[str, Any]:
                 "fullName": "ООО Звезда",
                 "inn": "7826688577",
                 "ogrn": "1027810281740",
+                "citizenship": "Россия",
+                "citizenshipCode": "RU",
+                "taxCountryCode": "RU",
                 "contacts": [
                     {"type": "EMAIL", "value": "romashka@rambler.ru"},
-                    {"type": "PHONE", "value": "+79183221488"},
+                    # в stub телефон без "+"
+                    {"type": "PHONE", "value": "79183221488"},
                 ],
                 "addresses": [
                     {
@@ -110,19 +116,21 @@ def build_create_payload(channel: str) -> dict[str, Any]:
             {
                 "code": "NON_CREDIT_INSURANCE",
                 "type": "PRODUCT",
-                "salesChannel": {"code": sales_channel},
+                "salesChannel": {"code": system_code},
                 "productProperties": {
                     "code": "NON_CREDIT_INSURANCE",
                     "programId": 1073741824,
-                    "signDate": "2026-06-25T11:47:13.570Z",
-                    "beginDate": "2026-06-25T11:47:13.570Z",
-                    "endDate": "2026-06-25T11:47:13.570Z",
+                    "signDate": dates,
+                    "beginDate": dates,
+                    "endDate": dates,
                     "duration": 12,
                     "paymentType": "payment_account",
                     "contractNumber": f"Z6922/888/PY{datetime.now().strftime('%H%M%S')}/6",
                     "insuranceSum": 20000.0,
                     "insurancePremium": 20000.0,
-                    "agreementLink": str(uuid.uuid4()),
+                    "agreementLink": doc_link,
+                    "policyLink": doc_link,
+                    "contractLink": doc_link,
                     "debitAccount": "123523464567347",
                     "insuranceObjects": [{"paymentAccount": "123523464567347"}],
                 },
@@ -151,7 +159,6 @@ def get_token(
 
 
 def default_headers(token: str, channel: str) -> dict[str, str]:
-    # заголовки как в Postman NIB; для SFA при необходимости поправь
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -177,21 +184,123 @@ def create_application(
     return resp.json()
 
 
-def get_application(
-    base_url: str,
-    headers: dict[str, str],
+def try_get_application(
+    base_urls: list[str],
+    token: str,
+    channel: str,
     app_id: str,
     timeout: int = 60,
-) -> dict[str, Any]:
-    url = f"{base_url.rstrip('/')}/v1/applications/{app_id}"
-    resp = requests.get(url, headers=headers, timeout=timeout)
-    if resp.status_code >= 400:
-        raise RuntimeError(f"GET {resp.status_code}: {resp.text[:2000]}")
-    return resp.json()
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """
+    GET часто отдаёт 403 RBAC для service-account (create можно, read нельзя).
+    Пробуем несколько URL и наборов заголовков; при неуспехе возвращаем None.
+    """
+    attempts: list[str] = []
+    header_variants = [
+        ("full", default_headers(token, channel)),
+        (
+            "auth-only",
+            {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+        ),
+    ]
+
+    for base in base_urls:
+        url = f"{base.rstrip('/')}/v1/applications/{app_id}"
+        for name, headers in header_variants:
+            try:
+                resp = requests.get(url, headers=headers, timeout=timeout)
+            except requests.RequestException as exc:
+                attempts.append(f"{name} {url} -> network error: {exc}")
+                continue
+            msg = f"{name} {url} -> {resp.status_code}"
+            if resp.status_code == 200:
+                attempts.append(f"{msg} OK")
+                return resp.json(), attempts
+            attempts.append(f"{msg}: {resp.text[:200]}")
+    return None, attempts
 
 
 def extract_channel_codes(app: dict[str, Any]) -> list[str]:
     return [c.get("code") for c in app.get("channels") or [] if c.get("code")]
+
+
+def summarize_app(app: dict[str, Any]) -> dict[str, Any]:
+    products_summary = []
+    for p in app.get("products") or []:
+        props = p.get("productProperties")
+        products_summary.append(
+            {
+                "id": p.get("id"),
+                "code": p.get("code"),
+                "status": (p.get("status") or {}).get("code"),
+                "hasProductProperties": bool(props),
+                "productPropertiesKeys": sorted(props.keys()) if isinstance(props, dict) else [],
+            }
+        )
+
+    participants_summary = []
+    for part in app.get("participants") or []:
+        contacts = part.get("contacts") or []
+        emails = [c.get("value") for c in contacts if c.get("type") == "EMAIL"]
+        participants_summary.append(
+            {
+                "pin": part.get("pin"),
+                "hasContacts": bool(contacts),
+                "emails": emails,
+            }
+        )
+
+    return {
+        "id": app.get("id"),
+        "number": app.get("number"),
+        "statusCode": app.get("statusCode"),
+        "finalVersion": app.get("finalVersion"),
+        "channels": extract_channel_codes(app),
+        "participants": participants_summary,
+        "products": products_summary,
+    }
+
+
+def warn_incomplete_create(app: dict[str, Any]) -> None:
+    summary = summarize_app(app)
+    problems: list[str] = []
+
+    if summary.get("statusCode") == "DRAFT":
+        processes_may_still_start = True
+        problems.append(
+            "statusCode=DRAFT (в create-ответе так бывает даже при finalVersion=true; "
+            "главное — есть ли процессы в Operate и productProperties в заявке)"
+        )
+        _ = processes_may_still_start
+
+    for p in summary.get("products") or []:
+        if not p.get("hasProductProperties"):
+            problems.append(
+                "в ответе нет products[].productProperties — "
+                "если их реально нет в UMP, prepare вернёт documents=null"
+            )
+
+    for part in summary.get("participants") or []:
+        if not part.get("emails"):
+            problems.append(
+                "в ответе нет EMAIL у participant — "
+                "если email не сохранился, PrepareDataForPrintFormValidator упадёт на email"
+            )
+
+    if not problems:
+        print("\nOK: в ответе есть channel / email / productProperties (по доступным полям).")
+        return
+
+    print("\n=== WARN по create/get ответу ===")
+    for item in problems:
+        print(f"- {item}")
+    print(
+        "Дальше смотри Operate по businessKey=application id. "
+        "Если ump-prepare-documents-ncins-pa есть и docsResult/acDocuments заполнены — данные на месте."
+    )
 
 
 def print_json(title: str, data: Any) -> None:
@@ -247,6 +356,7 @@ def main() -> int:
     parser.add_argument("--base-url", default="", help="Override create API base URL")
     parser.add_argument("--token", default="", help="Готовый Bearer token (тогда token-url не нужен)")
     parser.add_argument("--skip-create", action="store_true")
+    parser.add_argument("--skip-get", action="store_true", help="Не вызывать GET (часто 403 RBAC)")
     parser.add_argument("--app-id", default="", help="UUID заявки, если --skip-create")
     parser.add_argument("--dry-run", action="store_true", help="Только напечатать payload/start JSON")
     args = parser.parse_args()
@@ -294,6 +404,7 @@ def main() -> int:
         token = get_token(token_url, args.client_id, args.client_secret)
 
     headers = default_headers(token, args.channel)
+    created: dict[str, Any] | None = None
 
     if args.skip_create:
         if not args.app_id:
@@ -301,6 +412,7 @@ def main() -> int:
             return 2
         app_id = args.app_id
         print(f"\nПропускаю create, app_id={app_id}")
+        app: dict[str, Any] = {"id": app_id}
     else:
         print(f"\nCREATE {base_url}/v1/applications?finalVersion=true&fullCreate=true")
         created = create_application(base_url, headers, payload)
@@ -309,39 +421,49 @@ def main() -> int:
         if not app_id:
             print("В ответе create нет id", file=sys.stderr)
             return 1
+        app = created
+        warn_incomplete_create(created)
 
-    print(f"\nGET application {app_id}")
-    app = get_application(base_url, headers, app_id)
-    print_json("GET response (short checks)", {
-        "id": app.get("id"),
-        "statusCode": app.get("statusCode"),
-        "finalVersion": app.get("finalVersion"),
-        "channels": extract_channel_codes(app),
-        "products": [
-            {
-                "id": p.get("id"),
-                "code": p.get("code"),
-                "status": (p.get("status") or {}).get("code"),
-                "hasProductProperties": bool(p.get("productProperties")),
-            }
-            for p in (app.get("products") or [])
-        ],
-    })
+    if not args.skip_get:
+        get_bases = [base_url]
+        # на NIB дополнительно пробуем ACC API — иногда read открыт там
+        if args.channel == "nib" and env_cfg.get("nib_base_url") not in get_bases:
+            get_bases.append(env_cfg["nib_base_url"])
 
-    # обновим start JSON реальным id
+        print(f"\nGET application {app_id} (ошибка 403 для service-account — нормальна)")
+        fetched, attempts = try_get_application(get_bases, token, args.channel, app_id)
+        for line in attempts:
+            print(f"  try: {line}")
+        if fetched is None:
+            print(
+                "\nGET недоступен (RBAC). Берём данные из CREATE-ответа и идём в Operate.\n"
+                "Если нужен полный GET — токен пользователя/роли с read, не client_credentials SA."
+            )
+        else:
+            app = fetched
+            print_json("GET response (short checks)", summarize_app(app))
+            warn_incomplete_create(app)
+    else:
+        print("\n--skip-get: GET не вызывался")
+
     prepare_start["businessKey"] = app_id
     generate_start["serviceId"] = app_id
     print_json("Start JSON prepare (готово)", prepare_start)
     print_json("Start JSON generate (готово)", generate_start)
 
-    channels = extract_channel_codes(app)
+    channels = extract_channel_codes(app if isinstance(app, dict) else {})
     expected = "nib-corp-ncins" if args.channel == "nib" else "sfa-ncins"
-    if expected in channels:
-        print(f"OK channel: {expected}")
-    else:
-        print(f"WARN channel: ожидали {expected}, получили {channels}")
+    if channels:
+        if expected in channels:
+            print(f"OK channel: {expected}")
+        else:
+            print(f"WARN channel: ожидали {expected}, получили {channels}")
 
     print_operate_checklist(app_id, args.channel, env_cfg)
+    print(
+        f"\nГотово. application id = {app_id}\n"
+        f"Открой Operate и найди процессы по businessKey={app_id}"
+    )
     return 0
 
 
