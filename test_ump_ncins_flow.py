@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-NCINS / UMP E2E helper:
-1) получить token
-2) создать мультизаявку с полным payload (чтобы не было documents=null)
-3) попробовать прочитать заявку (GET часто 403 для service-account — это нормально)
-4) напечатать JSON для ручного Start процессов в Camunda + чеклист Operate
+NCINS / UMP E2E helper для NIB.
+
+Два способа авторизации:
+  1) --auth ump        Keycloak UMP, client_id=nib-corp-ncins
+                       доступы: POST /applications, POST /applications/list
+                       (на TEST list может быть закрыт)
+  2) --auth corporate  Keycloak corporate (curl от лида),
+                       client_id=nib-corp-ncinsurance → corp-gateway
+
+GET /applications/{id} у NIB НЕТ в правах → будет 403 RBAC.
+Читаем заявку через POST /applications/list (фильтр по number / pin / inn).
 
 Примеры:
-  python test_ump_ncins_flow.py --env dev --channel nib
-  python test_ump_ncins_flow.py --env test --channel sfa
-  python test_ump_ncins_flow.py --env test --channel nib --skip-create --app-id <uuid>
-  python test_ump_ncins_flow.py --skip-get   # не дергать GET
+  python test_ump_ncins_flow.py --env dev --auth ump --channel nib
+  python test_ump_ncins_flow.py --env qa --auth ump --channel nib
+  python test_ump_ncins_flow.py --env test --auth corporate --channel nib
+  python test_ump_ncins_flow.py --env dev --auth ump --skip-get
+  python test_ump_ncins_flow.py --dry-run
 """
 
 from __future__ import annotations
@@ -23,48 +30,162 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
+import urllib3
 
-# --- стенды из комментариев к NCINS-143 ---
-ENVIRONMENTS: dict[str, dict[str, str]] = {
+# self-signed / corporate CA на keycloak UMP
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+ENVIRONMENTS: dict[str, dict[str, Any]] = {
     "dev": {
-        "nib_base_url": (
-            "http://corp-gateway-dev.moscow.alfaintra.net/"
-            "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
-        ),
-        "create_base_url": (
-            "http://corp-gateway-dev.moscow.alfaintra.net/"
-            "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
-        ),
-        "sfa_base_url": "https://dev.ufrulkint-api.moscow.alfaintra.net/ufr-eos-ul-ncins-core-api",
         "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
         "kafka": (
             "https://akhq.umpqak8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
             "topic/ump.process.to.system/data?sort=Newest&partition=All"
         ),
-        "token_url": (
-            "http://corp-gateway-dev.moscow.alfaintra.net/mks-gateway/public/auth/"
-            "realms/corporate/protocol/openid-connect/token"
+        "corporate": {
+            "token_url": (
+                "http://corp-gateway-dev.moscow.alfaintra.net/mks-gateway/public/auth/"
+                "realms/corporate/protocol/openid-connect/token"
+            ),
+            "client_id": "nib-corp-ncinsurance",
+            "client_secret": "nib_corp_ncinsurance",
+            "base_url": (
+                "http://corp-gateway-dev.moscow.alfaintra.net/"
+                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+            ),
+            # corp-ncins proxy обычно с /v1
+            "paths": {
+                "create": "/v1/applications",
+                "list": "/v1/applications/list",
+                "get": "/v1/applications/{id}",
+            },
+            "can_list": True,
+            "verify_ssl": True,
+        },
+        "ump": {
+            # НИБ пользователи Keycloak в UMP / DEV
+            "token_url": (
+                "https://keycloak.umpdevwk8sm1.moscow.alfaintra.net/"
+                "realms/ump/protocol/openid-connect/token"
+            ),
+            "client_id": "nib-corp-ncins",
+            "client_secret": "OlcnSVnz3UiORtl4XfJZ3NRRZlqw7QPY",
+            # тот же corp-proxy; при необходимости --base-url на facade
+            "base_url": (
+                "http://corp-gateway-dev.moscow.alfaintra.net/"
+                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+            ),
+            "paths": {
+                "create": "/v1/applications",
+                "list": "/v1/applications/list",
+                "get": "/v1/applications/{id}",
+                # fallback на контракт facade без /v1
+                "create_alt": "/applications",
+                "list_alt": "/applications/list",
+            },
+            "can_list": True,
+            "verify_ssl": False,  # curl -k
+        },
+        "sfa_base_url": "https://dev.ufrulkint-api.moscow.alfaintra.net/ufr-eos-ul-ncins-core-api",
+    },
+    "qa": {
+        "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
+        "kafka": (
+            "https://akhq.umpqak8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
+            "topic/ump.process.to.system/data?sort=Newest&partition=All"
         ),
+        "corporate": {
+            "token_url": (
+                "http://corp-gateway-test.moscow.alfaintra.net/mks-gateway/public/auth/"
+                "realms/corporate/protocol/openid-connect/token"
+            ),
+            "client_id": "nib-corp-ncinsurance",
+            "client_secret": "nib_corp_ncinsurance",
+            "base_url": (
+                "http://corp-gateway-test.moscow.alfaintra.net/"
+                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+            ),
+            "paths": {
+                "create": "/v1/applications",
+                "list": "/v1/applications/list",
+                "get": "/v1/applications/{id}",
+            },
+            "can_list": True,
+            "verify_ssl": True,
+        },
+        "ump": {
+            # НИБ пользователи Keycloak в UMP / QA
+            "token_url": (
+                "https://keycloak.umpqak8sm1.moscow.alfaintra.net/"
+                "realms/ump/protocol/openid-connect/token"
+            ),
+            "client_id": "nib-corp-ncins",
+            "client_secret": "DRcjLK7ZeFSy4P0A7fPuZrD1ppXccxd0",
+            "base_url": (
+                "http://corp-gateway-test.moscow.alfaintra.net/"
+                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+            ),
+            "paths": {
+                "create": "/v1/applications",
+                "list": "/v1/applications/list",
+                "get": "/v1/applications/{id}",
+                "create_alt": "/applications",
+                "list_alt": "/applications/list",
+            },
+            "can_list": True,
+            "verify_ssl": False,
+        },
+        "sfa_base_url": "https://int.ufrulkint-api.moscow.alfaintra.net/ufr-eos-ul-ncins-core-api",
     },
     "test": {
-        "nib_base_url": (
-            "http://corp-gateway-test.moscow.alfaintra.net/"
-            "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
-        ),
-        "create_base_url": (
-            "http://corp-gateway-test.moscow.alfaintra.net/"
-            "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
-        ),
-        "sfa_base_url": "https://int.ufrulkint-api.moscow.alfaintra.net/ufr-eos-ul-ncins-core-api",
         "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
         "kafka": (
             "https://akhq.umptech.moscow.alfaintra.net/ui/ump-kafka-cluster/"
             "topic/ump.process.to.system/data?sort=Newest&partition=All"
         ),
-        "token_url": (
-            "http://corp-gateway-test.moscow.alfaintra.net/mks-gateway/public/auth/"
-            "realms/corporate/protocol/openid-connect/token"
-        ),
+        "corporate": {
+            # curl от лида
+            "token_url": (
+                "http://corp-gateway-test.moscow.alfaintra.net/mks-gateway/public/auth/"
+                "realms/corporate/protocol/openid-connect/token"
+            ),
+            "client_id": "nib-corp-ncinsurance",
+            "client_secret": "nib_corp_ncinsurance",
+            "base_url": (
+                "http://corp-gateway-test.moscow.alfaintra.net/"
+                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+            ),
+            "paths": {
+                "create": "/v1/applications",
+                "list": "/v1/applications/list",
+                "get": "/v1/applications/{id}",
+            },
+            "can_list": True,
+            "verify_ssl": True,
+        },
+        "ump": {
+            # НИБ пользователи Keycloak в UMP / TEST — только POST /applications
+            "token_url": (
+                "https://idp-api-test.alfaintra.net/auth/realms/ump/"
+                "protocol/openid-connect/token"
+            ),
+            "client_id": "nib-corp-ncins",
+            "client_secret": "wcpWehuLXKRWwMYE17EXvg9ShCQ7Rovc",
+            "base_url": (
+                "http://corp-gateway-test.moscow.alfaintra.net/"
+                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+            ),
+            "paths": {
+                "create": "/v1/applications",
+                "list": "/v1/applications/list",
+                "get": "/v1/applications/{id}",
+                "create_alt": "/applications",
+                "list_alt": "/applications/list",
+            },
+            "can_list": False,
+            "verify_ssl": False,
+        },
+        "sfa_base_url": "https://int.ufrulkint-api.moscow.alfaintra.net/ufr-eos-ul-ncins-core-api",
     },
 }
 
@@ -78,7 +199,6 @@ def build_create_payload(channel: str) -> dict[str, Any]:
     ext_id = str(uuid.uuid4())
     system_code = "NIB" if channel == "nib" else "SFA"
     doc_link = str(uuid.uuid4())
-    # формат как в stub ump_application_response_200.json
     dates = "2026-06-25T11:47:13.57Z"
 
     return {
@@ -101,7 +221,6 @@ def build_create_payload(channel: str) -> dict[str, Any]:
                 "taxCountryCode": "RU",
                 "contacts": [
                     {"type": "EMAIL", "value": "romashka@rambler.ru"},
-                    # в stub телефон без "+"
                     {"type": "PHONE", "value": "79183221488"},
                 ],
                 "addresses": [
@@ -143,6 +262,7 @@ def get_token(
     token_url: str,
     client_id: str,
     client_secret: str,
+    verify_ssl: bool = True,
     timeout: int = 60,
 ) -> str:
     data = {
@@ -150,8 +270,15 @@ def get_token(
         "client_id": client_id,
         "client_secret": client_secret,
     }
-    resp = requests.post(token_url, data=data, timeout=timeout)
-    resp.raise_for_status()
+    resp = requests.post(
+        token_url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=timeout,
+        verify=verify_ssl,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"TOKEN {resp.status_code}: {resp.text[:1000]}")
     token = resp.json().get("access_token")
     if not token:
         raise RuntimeError(f"В ответе token нет access_token: {resp.text[:500]}")
@@ -172,54 +299,124 @@ def default_headers(token: str, channel: str) -> dict[str, str]:
 
 def create_application(
     base_url: str,
+    create_path: str,
     headers: dict[str, str],
     payload: dict[str, Any],
+    verify_ssl: bool = True,
     timeout: int = 120,
 ) -> dict[str, Any]:
-    url = f"{base_url.rstrip('/')}/v1/applications"
+    url = f"{base_url.rstrip('/')}{create_path}"
     params = {"finalVersion": "true", "fullCreate": "true"}
-    resp = requests.post(url, headers=headers, params=params, json=payload, timeout=timeout)
+    resp = requests.post(
+        url, headers=headers, params=params, json=payload, timeout=timeout, verify=verify_ssl
+    )
     if resp.status_code >= 400:
         raise RuntimeError(f"CREATE {resp.status_code}: {resp.text[:2000]}")
     return resp.json()
 
 
-def try_get_application(
-    base_urls: list[str],
-    token: str,
-    channel: str,
-    app_id: str,
+def list_applications(
+    base_url: str,
+    list_path: str,
+    headers: dict[str, str],
+    *,
+    number: str | None = None,
+    pin: str | None = None,
+    inn: str | None = None,
+    verify_ssl: bool = True,
     timeout: int = 60,
+) -> tuple[dict[str, Any] | None, str]:
+    """POST /applications/list — единственный разрешённый read для NIB на DEV/QA."""
+    url = f"{base_url.rstrip('/')}{list_path}"
+    application_filter: dict[str, Any] = {}
+    if number:
+        application_filter["number"] = number
+    if pin:
+        application_filter["pin"] = pin
+    if inn:
+        application_filter["inn"] = inn
+    body = {"filter": {"applicationFilter": application_filter}} if application_filter else {}
+
+    resp = requests.post(
+        url,
+        headers=headers,
+        params={"limit": 10, "offset": 0},
+        json=body,
+        timeout=timeout,
+        verify=verify_ssl,
+    )
+    detail = f"{resp.status_code} {url} body={json.dumps(body, ensure_ascii=False)}"
+    if resp.status_code >= 400:
+        return None, f"{detail} -> {resp.text[:500]}"
+    return resp.json(), f"{detail} OK"
+
+
+def try_read_application(
+    auth_cfg: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    app_id: str,
+    number: str | None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """
-    GET часто отдаёт 403 RBAC для service-account (create можно, read нельзя).
-    Пробуем несколько URL и наборов заголовков; при неуспехе возвращаем None.
+    NIB: GET /applications/{id} не в правах → 403.
+    Читаем через POST /applications/list.
     """
     attempts: list[str] = []
-    header_variants = [
-        ("full", default_headers(token, channel)),
-        (
-            "auth-only",
-            {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-            },
-        ),
-    ]
+    base = auth_cfg["base_url"]
+    paths = auth_cfg["paths"]
+    verify = auth_cfg.get("verify_ssl", True)
 
-    for base in base_urls:
-        url = f"{base.rstrip('/')}/v1/applications/{app_id}"
-        for name, headers in header_variants:
-            try:
-                resp = requests.get(url, headers=headers, timeout=timeout)
-            except requests.RequestException as exc:
-                attempts.append(f"{name} {url} -> network error: {exc}")
+    if not auth_cfg.get("can_list", True):
+        attempts.append(
+            "list недоступен для этого стенда/клиента (на TEST у nib-corp-ncins только POST /applications)"
+        )
+        return None, attempts
+
+    list_paths = [paths["list"]]
+    if paths.get("list_alt"):
+        list_paths.append(paths["list_alt"])
+
+    # сначала по number (из create), потом по pin+inn
+    filters: list[dict[str, str | None]] = []
+    if number:
+        filters.append({"number": number, "pin": None, "inn": None})
+    filters.append({"number": None, "pin": "AAAXYX", "inn": "7826688577"})
+
+    for list_path in list_paths:
+        for flt in filters:
+            data, msg = list_applications(
+                base,
+                list_path,
+                headers,
+                number=flt["number"],
+                pin=flt["pin"],
+                inn=flt["inn"],
+                verify_ssl=verify,
+            )
+            attempts.append(f"LIST {msg}")
+            if data is None:
                 continue
-            msg = f"{name} {url} -> {resp.status_code}"
-            if resp.status_code == 200:
-                attempts.append(f"{msg} OK")
-                return resp.json(), attempts
-            attempts.append(f"{msg}: {resp.text[:200]}")
+            items = data.get("list") or []
+            # предпочитаем точное совпадение по id
+            for item in items:
+                if item.get("id") == app_id:
+                    return item, attempts
+            if items:
+                return items[0], attempts
+
+    # GET только для диагностики — ожидаем 403
+    get_path = paths.get("get", "/v1/applications/{id}").format(id=app_id)
+    get_url = f"{base.rstrip('/')}{get_path}"
+    try:
+        resp = requests.get(get_url, headers=headers, timeout=30, verify=verify)
+        attempts.append(
+            f"GET {resp.status_code} {get_url} "
+            f"(ожидаемо 403: у NIB нет GET /applications/{{id}}) -> {resp.text[:200]}"
+        )
+    except requests.RequestException as exc:
+        attempts.append(f"GET network error: {exc}")
+
     return None, attempts
 
 
@@ -261,6 +458,10 @@ def summarize_app(app: dict[str, Any]) -> dict[str, Any]:
         "channels": extract_channel_codes(app),
         "participants": participants_summary,
         "products": products_summary,
+        "note": (
+            "list возвращает урезанный ApplicationMain — "
+            "productProperties/contacts могут отсутствовать даже если они есть в UMP"
+        ),
     }
 
 
@@ -269,38 +470,32 @@ def warn_incomplete_create(app: dict[str, Any]) -> None:
     problems: list[str] = []
 
     if summary.get("statusCode") == "DRAFT":
-        processes_may_still_start = True
         problems.append(
             "statusCode=DRAFT (в create-ответе так бывает даже при finalVersion=true; "
-            "главное — есть ли процессы в Operate и productProperties в заявке)"
+            "смотри процессы в Operate)"
         )
-        _ = processes_may_still_start
 
     for p in summary.get("products") or []:
         if not p.get("hasProductProperties"):
             problems.append(
                 "в ответе нет products[].productProperties — "
-                "если их реально нет в UMP, prepare вернёт documents=null"
+                "list/create могут не отдавать их; проверь prepare в Operate"
             )
 
     for part in summary.get("participants") or []:
         if not part.get("emails"):
             problems.append(
-                "в ответе нет EMAIL у participant — "
-                "если email не сохранился, PrepareDataForPrintFormValidator упадёт на email"
+                "в ответе нет EMAIL — list часто без contacts; "
+                "если prepare падает на email, данные реально не сохранились"
             )
 
     if not problems:
-        print("\nOK: в ответе есть channel / email / productProperties (по доступным полям).")
+        print("\nOK: в ответе есть полезные поля для проверки.")
         return
 
-    print("\n=== WARN по create/get ответу ===")
+    print("\n=== WARN по create/list ответу ===")
     for item in problems:
         print(f"- {item}")
-    print(
-        "Дальше смотри Operate по businessKey=application id. "
-        "Если ump-prepare-documents-ncins-pa есть и docsResult/acDocuments заполнены — данные на месте."
-    )
 
 
 def print_json(title: str, data: Any) -> None:
@@ -308,7 +503,7 @@ def print_json(title: str, data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def print_operate_checklist(app_id: str, channel: str, env_cfg: dict[str, str]) -> None:
+def print_operate_checklist(app_id: str, channel: str, env_cfg: dict[str, Any]) -> None:
     expected_channel = "nib-corp-ncins" if channel == "nib" else "sfa-ncins"
     print(
         f"""
@@ -321,50 +516,78 @@ businessKey / application id: {app_id}
 
 Порядок процессов:
 1) ump-app-reg-pa
-   имя: Регистрация заявки
-   check: дедуп = Нет / isDeduplicatedTech=false
-
 2) ump-main-ma-ncins-pa
-   имя: Управление мультизаявкой по некредитному страхованию
-
-3) ump-prepare-documents-ncins-pa
-   имя: Процесс подготовки документов
-   variables:
-     docsResult=SUCCESS
-     acRequestId=...
-     acDocuments=[{{"acId":"...","type":"CONTRACT_ACCOUNT_BLOCK"}}]
-
-4) ump-generate-and-save-document-pa
-   имя: Формирование и сохранение документа в AlfaCapture
-   (child от prepare)  <-- NCINS-143
-
+3) ump-prepare-documents-ncins-pa  -> docsResult / acDocuments
+4) ump-generate-and-save-document-pa  <-- NCINS-143
 5) ump-signing-documents-ncins-pa
 6) ump-payment-ncins-pa
-7) ump-finalisation-ncins-pa  -> POST /v1/ins-contracts
-   затем 3x Сохранить документы в ЭА
+7) ump-finalisation-ncins-pa
+"""
+    )
+
+
+def print_auth_help() -> None:
+    print(
+        """
+=== Авторизация NIB ===
+UMP Keycloak (рекомендуется для UMP API):
+  DEV  client_id=nib-corp-ncins  -> POST /applications, POST /applications/list
+  QA   client_id=nib-corp-ncins  -> POST /applications, POST /applications/list
+  TEST client_id=nib-corp-ncins  -> POST /applications  (list НЕТ)
+
+Corporate (curl от лида) — для corp-gateway:
+  client_id=nib-corp-ncinsurance / client_secret=nib_corp_ncinsurance
+
+GET /applications/{id} у NIB нет в правах → 403 RBAC — это ожидаемо.
 """
     )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="NCINS UMP create + helpers for Camunda checks")
-    parser.add_argument("--env", choices=["dev", "test"], default="dev")
+    parser = argparse.ArgumentParser(description="NCINS UMP create + list + Camunda helpers")
+    parser.add_argument("--env", choices=["dev", "qa", "test"], default="dev")
+    parser.add_argument(
+        "--auth",
+        choices=["ump", "corporate"],
+        default="ump",
+        help="ump = Keycloak UMP nib-corp-ncins; corporate = curl от лида",
+    )
     parser.add_argument("--channel", choices=["nib", "sfa"], default="nib")
-    parser.add_argument("--client-id", default="nib-corp-ncinsurance")
-    parser.add_argument("--client-secret", default="nib_corp_ncinsurance")
+    parser.add_argument("--client-id", default="", help="Override client_id")
+    parser.add_argument("--client-secret", default="", help="Override client_secret")
     parser.add_argument("--token-url", default="")
-    parser.add_argument("--base-url", default="", help="Override create API base URL")
-    parser.add_argument("--token", default="", help="Готовый Bearer token (тогда token-url не нужен)")
+    parser.add_argument("--base-url", default="", help="Override API base URL")
+    parser.add_argument("--token", default="", help="Готовый Bearer token")
     parser.add_argument("--skip-create", action="store_true")
-    parser.add_argument("--skip-get", action="store_true", help="Не вызывать GET (часто 403 RBAC)")
+    parser.add_argument(
+        "--skip-get",
+        action="store_true",
+        help="Не читать заявку (ни list, ни get)",
+    )
     parser.add_argument("--app-id", default="", help="UUID заявки, если --skip-create")
-    parser.add_argument("--dry-run", action="store_true", help="Только напечатать payload/start JSON")
+    parser.add_argument("--app-number", default="", help="Номер заявки для list, напр. UMP26080447600")
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     env_cfg = ENVIRONMENTS[args.env]
-    base_url = args.base_url or env_cfg["create_base_url"]
+    auth_cfg = dict(env_cfg[args.auth])
+    if args.base_url:
+        auth_cfg["base_url"] = args.base_url
+    if args.token_url:
+        auth_cfg["token_url"] = args.token_url
+    if args.client_id:
+        auth_cfg["client_id"] = args.client_id
+    if args.client_secret:
+        auth_cfg["client_secret"] = args.client_secret
+
     if args.channel == "sfa" and not args.base_url:
-        base_url = env_cfg["sfa_base_url"]
+        auth_cfg["base_url"] = env_cfg["sfa_base_url"]
+
+    print_auth_help()
+    print(
+        f"env={args.env} auth={args.auth} "
+        f"client_id={auth_cfg['client_id']} base={auth_cfg['base_url']}"
+    )
 
     payload = build_create_payload(args.channel)
     print_json("CREATE payload", payload)
@@ -380,7 +603,6 @@ def main() -> int:
         "documents": [
             {
                 "documentType": "CONTRACT_ACCOUNT_BLOCK",
-                # минимальный xml в base64; в реальном флоу его собирает prepare
                 "reportData": (
                     "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48ZGF0YXNvdXJjZT4"
                     "PGNvbnRyYWN0TnVtYmVyPnRlc3Q8L2NvbnRyYWN0TnVtYmVyPjwvZGF0YXNvdXJjZT4="
@@ -396,15 +618,22 @@ def main() -> int:
         print("\nDry-run: запросы в API не отправлялись.")
         return 0
 
+    verify = auth_cfg.get("verify_ssl", True)
     if args.token:
         token = args.token
     else:
-        token_url = args.token_url or env_cfg["token_url"]
-        print(f"\nПолучаю token: {token_url}")
-        token = get_token(token_url, args.client_id, args.client_secret)
+        print(f"\nПолучаю token ({args.auth}): {auth_cfg['token_url']}")
+        print(f"client_id={auth_cfg['client_id']}")
+        token = get_token(
+            auth_cfg["token_url"],
+            auth_cfg["client_id"],
+            auth_cfg["client_secret"],
+            verify_ssl=verify,
+        )
 
     headers = default_headers(token, args.channel)
-    created: dict[str, Any] | None = None
+    app: dict[str, Any]
+    app_number = args.app_number or None
 
     if args.skip_create:
         if not args.app_id:
@@ -412,12 +641,38 @@ def main() -> int:
             return 2
         app_id = args.app_id
         print(f"\nПропускаю create, app_id={app_id}")
-        app: dict[str, Any] = {"id": app_id}
+        app = {"id": app_id, "number": app_number}
     else:
-        print(f"\nCREATE {base_url}/v1/applications?finalVersion=true&fullCreate=true")
-        created = create_application(base_url, headers, payload)
+        create_path = auth_cfg["paths"]["create"]
+        print(
+            f"\nCREATE {auth_cfg['base_url']}{create_path}"
+            f"?finalVersion=true&fullCreate=true"
+        )
+        try:
+            created = create_application(
+                auth_cfg["base_url"],
+                create_path,
+                headers,
+                payload,
+                verify_ssl=verify,
+            )
+        except RuntimeError as exc:
+            # fallback на /applications без /v1 (контракт facade)
+            alt = auth_cfg["paths"].get("create_alt")
+            if not alt:
+                raise
+            print(f"CREATE /v1 не прошёл ({exc}); пробую {alt}")
+            created = create_application(
+                auth_cfg["base_url"],
+                alt,
+                headers,
+                payload,
+                verify_ssl=verify,
+            )
+
         print_json("CREATE response", created)
         app_id = created.get("id")
+        app_number = created.get("number") or app_number
         if not app_id:
             print("В ответе create нет id", file=sys.stderr)
             return 1
@@ -425,26 +680,29 @@ def main() -> int:
         warn_incomplete_create(created)
 
     if not args.skip_get:
-        get_bases = [base_url]
-        # на NIB дополнительно пробуем ACC API — иногда read открыт там
-        if args.channel == "nib" and env_cfg.get("nib_base_url") not in get_bases:
-            get_bases.append(env_cfg["nib_base_url"])
-
-        print(f"\nGET application {app_id} (ошибка 403 для service-account — нормальна)")
-        fetched, attempts = try_get_application(get_bases, token, args.channel, app_id)
+        print(
+            f"\nЧитаю заявку через POST /applications/list "
+            f"(GET /{{id}} у NIB нет в правах)"
+        )
+        fetched, attempts = try_read_application(
+            auth_cfg,
+            headers,
+            app_id=app_id,
+            number=app_number,
+        )
         for line in attempts:
             print(f"  try: {line}")
         if fetched is None:
             print(
-                "\nGET недоступен (RBAC). Берём данные из CREATE-ответа и идём в Operate.\n"
-                "Если нужен полный GET — токен пользователя/роли с read, не client_credentials SA."
+                "\nlist/get не дали полную заявку. Это не блокер: "
+                "бери application id из CREATE и смотри Operate."
             )
         else:
             app = fetched
-            print_json("GET response (short checks)", summarize_app(app))
+            print_json("LIST/read (short checks)", summarize_app(app))
             warn_incomplete_create(app)
     else:
-        print("\n--skip-get: GET не вызывался")
+        print("\n--skip-get: чтение заявки пропущено")
 
     prepare_start["businessKey"] = app_id
     generate_start["serviceId"] = app_id
@@ -461,8 +719,9 @@ def main() -> int:
 
     print_operate_checklist(app_id, args.channel, env_cfg)
     print(
-        f"\nГотово. application id = {app_id}\n"
-        f"Открой Operate и найди процессы по businessKey={app_id}"
+        f"\nГотово. application id = {app_id}"
+        + (f", number = {app_number}" if app_number else "")
+        + f"\nOperate businessKey={app_id}"
     )
     return 0
 
