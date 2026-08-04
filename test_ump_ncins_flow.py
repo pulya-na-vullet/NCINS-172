@@ -319,24 +319,13 @@ def list_applications(
     base_url: str,
     list_path: str,
     headers: dict[str, str],
+    body: dict[str, Any],
     *,
-    number: str | None = None,
-    pin: str | None = None,
-    inn: str | None = None,
     verify_ssl: bool = True,
     timeout: int = 60,
 ) -> tuple[dict[str, Any] | None, str]:
-    """POST /applications/list — единственный разрешённый read для NIB на DEV/QA."""
+    """POST /applications/list."""
     url = f"{base_url.rstrip('/')}{list_path}"
-    application_filter: dict[str, Any] = {}
-    if number:
-        application_filter["number"] = number
-    if pin:
-        application_filter["pin"] = pin
-    if inn:
-        application_filter["inn"] = inn
-    body = {"filter": {"applicationFilter": application_filter}} if application_filter else {}
-
     resp = requests.post(
         url,
         headers=headers,
@@ -347,20 +336,74 @@ def list_applications(
     )
     detail = f"{resp.status_code} {url} body={json.dumps(body, ensure_ascii=False)}"
     if resp.status_code >= 400:
-        return None, f"{detail} -> {resp.text[:500]}"
+        return None, f"{detail} -> {resp.text[:400]}"
     return resp.json(), f"{detail} OK"
+
+
+def corp_list_bodies(app_id: str, number: str | None) -> list[dict[str, Any]]:
+    """
+    corp-ncins DTO = GetApplicationsUmpPostRequestDto — НЕ facade {filter:{...}}.
+    Пробуем типичные варианты, пока не найдём рабочий / не пришлёшь schema из Postman.
+    """
+    bodies: list[dict[str, Any]] = []
+    if app_id:
+        bodies.extend(
+            [
+                {"ids": [app_id]},
+                {"applicationIds": [app_id]},
+                {"id": app_id},
+                {"applicationId": app_id},
+            ]
+        )
+    if number:
+        bodies.extend(
+            [
+                {"numbers": [number]},
+                {"number": number},
+                {"applicationNumber": number},
+                {"applicationNumbers": [number]},
+            ]
+        )
+    bodies.append({})
+    return bodies
+
+
+def ump_list_bodies(number: str | None) -> list[dict[str, Any]]:
+    """Контракт ump-application-facade: filter.applicationFilter."""
+    bodies: list[dict[str, Any]] = []
+    if number:
+        bodies.append({"filter": {"applicationFilter": {"number": number}}})
+    bodies.append(
+        {"filter": {"applicationFilter": {"pin": "AAAXYX", "inn": "7826688577"}}}
+    )
+    return bodies
+
+
+def pick_from_list_response(data: dict[str, Any], app_id: str) -> dict[str, Any] | None:
+    items = data.get("list") or data.get("applications") or data.get("content") or []
+    if isinstance(data, list):
+        items = data
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if isinstance(item, dict) and item.get("id") == app_id:
+            return item
+    if items and isinstance(items[0], dict):
+        return items[0]
+    return None
 
 
 def try_read_application(
     auth_cfg: dict[str, Any],
     headers: dict[str, str],
     *,
+    auth_mode: str,
     app_id: str,
     number: str | None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """
     NIB: GET /applications/{id} не в правах → 403.
-    Читаем через POST /applications/list.
+    Читаем через POST /applications/list (схема тела зависит от auth).
     """
     attempts: list[str] = []
     base = auth_cfg["base_url"]
@@ -373,46 +416,33 @@ def try_read_application(
         )
         return None, attempts
 
-    list_paths = [paths["list"]]
-    if paths.get("list_alt"):
-        list_paths.append(paths["list_alt"])
+    list_path = paths["list"]
+    bodies = (
+        corp_list_bodies(app_id, number)
+        if auth_mode == "corporate"
+        else ump_list_bodies(number)
+    )
 
-    # сначала по number (из create), потом по pin+inn
-    filters: list[dict[str, str | None]] = []
-    if number:
-        filters.append({"number": number, "pin": None, "inn": None})
-    filters.append({"number": None, "pin": "AAAXYX", "inn": "7826688577"})
+    for body in bodies:
+        data, msg = list_applications(
+            base, list_path, headers, body, verify_ssl=verify
+        )
+        attempts.append(f"LIST {msg}")
+        if data is None:
+            # невалидное поле — пробуем следующий body
+            continue
+        found = pick_from_list_response(data, app_id)
+        if found:
+            return found, attempts
 
-    for list_path in list_paths:
-        for flt in filters:
-            data, msg = list_applications(
-                base,
-                list_path,
-                headers,
-                number=flt["number"],
-                pin=flt["pin"],
-                inn=flt["inn"],
-                verify_ssl=verify,
-            )
-            attempts.append(f"LIST {msg}")
-            if data is None:
-                continue
-            items = data.get("list") or []
-            # предпочитаем точное совпадение по id
-            for item in items:
-                if item.get("id") == app_id:
-                    return item, attempts
-            if items:
-                return items[0], attempts
-
-    # GET только для диагностики — ожидаем 403
+    # GET только для диагностики — ожидаем 403, не считаем ошибкой скрипта
     get_path = paths.get("get", "/v1/applications/{id}").format(id=app_id)
     get_url = f"{base.rstrip('/')}{get_path}"
     try:
         resp = requests.get(get_url, headers=headers, timeout=30, verify=verify)
         attempts.append(
             f"GET {resp.status_code} {get_url} "
-            f"(ожидаемо 403: у NIB нет GET /applications/{{id}}) -> {resp.text[:200]}"
+            f"(ожидаемо 403 у NIB) -> {resp.text[:160]}"
         )
     except requests.RequestException as exc:
         attempts.append(f"GET network error: {exc}")
@@ -711,6 +741,7 @@ def main() -> int:
         fetched, attempts = try_read_application(
             auth_cfg,
             headers,
+            auth_mode=args.auth,
             app_id=app_id,
             number=app_number,
         )
