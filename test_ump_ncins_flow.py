@@ -40,6 +40,23 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---------------------------------------------------------------------------
+# Kafka: inbound (система → Zeebe), НЕ to.system
+# to.system = исходящий (transfer-control → смежка)
+# from.system = входящий (смежка → publishMessage в Zeebe)
+# end.event  = запасной inbound (ump-processes → newPublishMessageCommand)
+# ---------------------------------------------------------------------------
+
+KAFKA_INBOUND_TOPIC = "ump.process.from.system"
+KAFKA_INBOUND_TOPIC_ALT = "ump.process.end.event"
+KAFKA_OUTBOUND_TOPIC = "ump.process.to.system"  # только смотреть исходящие
+
+
+def kafka_topic_ui(akhq_base: str, topic: str) -> str:
+    base = akhq_base.rstrip("/")
+    return f"{base}/ui/ump-kafka-cluster/topic/{topic}/data?sort=Newest&partition=All"
+
+
+# ---------------------------------------------------------------------------
 # Конфиги стендов
 # ---------------------------------------------------------------------------
 
@@ -48,13 +65,14 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
         # corp-gateway-dev процессы обычно на umpdev; в задаче также указан umpqa — проверь оба
         "operate": "http://operate.umpdevwk8sm1.moscow.alfaintra.net/",
         "operate_alt": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
-        "kafka": (
-            "https://akhq.umpdevwk8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
-            "topic/ump.process.to.system/data?sort=Newest&partition=All"
+        "kafka": kafka_topic_ui(
+            "https://akhq.umpdevwk8sm1.moscow.alfaintra.net", KAFKA_INBOUND_TOPIC
         ),
-        "kafka_alt": (
-            "https://akhq.umpqak8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
-            "topic/ump.process.to.system/data?sort=Newest&partition=All"
+        "kafka_alt": kafka_topic_ui(
+            "https://akhq.umpqak8sm1.moscow.alfaintra.net", KAFKA_INBOUND_TOPIC
+        ),
+        "kafka_alt_end_event": kafka_topic_ui(
+            "https://akhq.umpqak8sm1.moscow.alfaintra.net", KAFKA_INBOUND_TOPIC_ALT
         ),
         # B) токен разработчика → corp-gateway
         "corporate": {
@@ -134,9 +152,11 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
     },
     "qa": {
         "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
-        "kafka": (
-            "https://akhq.umpqak8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
-            "topic/ump.process.to.system/data?sort=Newest&partition=All"
+        "kafka": kafka_topic_ui(
+            "https://akhq.umpqak8sm1.moscow.alfaintra.net", KAFKA_INBOUND_TOPIC
+        ),
+        "kafka_alt_end_event": kafka_topic_ui(
+            "https://akhq.umpqak8sm1.moscow.alfaintra.net", KAFKA_INBOUND_TOPIC_ALT
         ),
         "corporate": {
             "label": "Corporate Keycloak → corp-gateway (QA/INT)",
@@ -206,9 +226,11 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
     },
     "test": {
         "operate": "http://operate.umpqak8sm1.moscow.alfaintra.net/",
-        "kafka": (
-            "https://akhq.umptech.moscow.alfaintra.net/ui/ump-kafka-cluster/"
-            "topic/ump.process.to.system/data?sort=Newest&partition=All"
+        "kafka": kafka_topic_ui(
+            "https://akhq.umptech.moscow.alfaintra.net", KAFKA_INBOUND_TOPIC
+        ),
+        "kafka_alt_end_event": kafka_topic_ui(
+            "https://akhq.umptech.moscow.alfaintra.net", KAFKA_INBOUND_TOPIC_ALT
         ),
         "corporate": {
             "label": "Corporate Keycloak (curl разработчика) → corp-gateway TEST",
@@ -683,6 +705,66 @@ def build_payment_finished_payload(app_id: str) -> dict[str, Any]:
     }
 
 
+def build_signing_docs_payload(
+    app_id: str,
+    *,
+    product_id: str | None = None,
+    agreement_link: str | None = None,
+) -> dict[str, Any]:
+    """
+    SigningDocs для receive «Получить управление. Подписание».
+
+    correlationKey = businessKey + ".NON_CREDIT_INSURANCE" (из BPMN).
+    После корреляции update-product (AFTER_SIGNING) ждёт variables.agreementLink
+    (UUID из acDocuments[].acId в Operate) и variables.id (= productId).
+    """
+    payload: dict[str, Any] = {
+        "messageName": "SigningDocs",
+        "correlationKey": f"{app_id}.NON_CREDIT_INSURANCE",
+        "variables": {},
+    }
+    if product_id or agreement_link:
+        nested: dict[str, Any] = {}
+        if product_id:
+            nested["id"] = product_id
+        if agreement_link:
+            nested["agreementLink"] = agreement_link
+        payload["variables"] = {"variables": nested}
+    return payload
+
+
+def _print_kafka_produce_block(
+    *,
+    title: str,
+    topic: str,
+    payload: dict[str, Any],
+    out_path: str,
+    env_cfg: dict[str, Any],
+    hint: str,
+) -> None:
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    alt = env_cfg.get("kafka_alt")
+    alt_end = env_cfg.get("kafka_alt_end_event")
+    print(
+        f"""
+!!!!!!!!!! {title} !!!!!!!!!!
+Топик:     {topic}
+  (НЕ {KAFKA_OUTBOUND_TOPIC} — это исходящий transfer-control)
+Запасной:  {KAFKA_INBOUND_TOPIC_ALT}
+UI:        {env_cfg.get('kafka')}
+{('UI alt:     ' + alt) if alt else ''}
+{('UI end.event: ' + alt_end) if alt_end else ''}
+Файл:      {out_path}
+{hint}
+
+----- НАЧАЛО JSON (копируй строго между линиями) -----
+{body}
+----- КОНЕЦ JSON -----
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+"""
+    )
+
+
 def write_kafka_payment_finished(
     app_id: str,
     env_cfg: dict[str, Any],
@@ -699,21 +781,43 @@ def write_kafka_payment_finished(
         json.dump(payload, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
 
-    body = json.dumps(payload, ensure_ascii=False, indent=2)
-    print(
-        f"""
-!!!!!!!!!! СКОПИРУЙ ЭТОТ JSON В KAFKA PRODUCE !!!!!!!!!!
-Топик: ump.process.to.system
-UI:    {env_cfg.get('kafka')}
-{('UI alt: ' + env_cfg['kafka_alt']) if env_cfg.get('kafka_alt') else ''}
-Файл:  {out_path}
-Успей за ~5 минут (PT5M), иначе оплата Canceled.
+    _print_kafka_produce_block(
+        title="СКОПИРУЙ JSON paymentFinished В KAFKA PRODUCE",
+        topic=KAFKA_INBOUND_TOPIC,
+        payload=payload,
+        out_path=out_path,
+        env_cfg=env_cfg,
+        hint="Успей за ~5 минут (PT5M), иначе оплата Canceled. "
+        "Сначала должен стартовать процесс оплаты.",
+    )
+    return payload, out_path
 
------ НАЧАЛО JSON (копируй строго между линиями) -----
-{body}
------ КОНЕЦ JSON -----
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-"""
+
+def write_kafka_signing_docs(
+    app_id: str,
+    env_cfg: dict[str, Any],
+    *,
+    product_id: str | None = None,
+    agreement_link: str | None = None,
+    out_dir: str = ".",
+) -> tuple[dict[str, Any], str]:
+    """Сформировать JSON SigningDocs для разблокировки подписания."""
+    payload = build_signing_docs_payload(
+        app_id, product_id=product_id, agreement_link=agreement_link
+    )
+    out_path = f"{out_dir.rstrip('/')}/SigningDocs_{app_id}.json"
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+
+    _print_kafka_produce_block(
+        title="СКОПИРУЙ JSON SigningDocs В KAFKA PRODUCE",
+        topic=KAFKA_INBOUND_TOPIC,
+        payload=payload,
+        out_path=out_path,
+        env_cfg=env_cfg,
+        hint="Таймаут подписания ~25 мин (PT25M). "
+        "agreementLink бери из Variables.acDocuments[].acId в Operate.",
     )
     return payload, out_path
 
@@ -723,8 +827,21 @@ def print_copy_payment_finished_again(app_id: str) -> None:
     body = json.dumps(build_payment_finished_payload(app_id), ensure_ascii=False, indent=2)
     print(
         f"""
-========== ЕЩЁ РАЗ: JSON ДЛЯ KAFKA (скопируй целиком) ==========
-Топик: ump.process.to.system
+========== ЕЩЁ РАЗ: JSON paymentFinished ДЛЯ KAFKA ==========
+Топик: {KAFKA_INBOUND_TOPIC}  (не {KAFKA_OUTBOUND_TOPIC})
+
+{body}
+"""
+    )
+
+
+def print_copy_signing_docs_again(app_id: str) -> None:
+    body = json.dumps(build_signing_docs_payload(app_id), ensure_ascii=False, indent=2)
+    print(
+        f"""
+========== ЕЩЁ РАЗ: JSON SigningDocs ДЛЯ KAFKA ==========
+Топик: {KAFKA_INBOUND_TOPIC}  (не {KAFKA_OUTBOUND_TOPIC})
+Если from.system не сдвинет — попробуй {KAFKA_INBOUND_TOPIC_ALT}
 
 {body}
 """
@@ -760,10 +877,13 @@ Kafka:   {env_cfg['kafka']}
    → Call Activity ump-generate-and-save-document-pa отрабатывает (NCINS-143)
 
 4) «Подписание» (ump-signing-documents-ncins-pa)
-   → Input с AFTER_SIGNING / Kafka SigningDocs
+   → стоп на receive SigningDocs
+   → Produce в {KAFKA_INBOUND_TOPIC} (НЕ {KAFKA_OUTBOUND_TOPIC})
+   → JSON SigningDocs печатает скрипт; agreementLink = acDocuments[].acId
+   → запасной топик: {KAFKA_INBOUND_TOPIC_ALT}
 
 5) «Процесс оплаты» — стоп на receive paymentFinished
-   → в Kafka ump.process.to.system отправь paymentFinished (скрипт печатает JSON)
+   → Produce в {KAFKA_INBOUND_TOPIC} JSON paymentFinished (скрипт печатает)
    → уложись в ~5 минут, иначе Canceled
 
 6) «Финализация» → POST /v1/ins-contracts (создание договора в Учёте)
@@ -991,7 +1111,9 @@ API base:  {auth_cfg['base_url']}
             f"id={app_id}" + (f", number={app_number}" if app_number else ""),
         )
         cl.add("Совпадение токен↔API", "PASS", f"auth={args.auth}, base={auth_cfg['base_url']}")
-        # Сразу после create — JSON paymentFinished с реальным applicationId
+        # Сразу после create — JSON для Kafka (SigningDocs раньше paymentFinished)
+        _, sd_path = write_kafka_signing_docs(app_id, env_cfg)
+        cl.add("Сформирован SigningDocs JSON", "PASS", sd_path)
         _, pf_path = write_kafka_payment_finished(app_id, env_cfg)
         cl.add("Сформирован paymentFinished JSON", "PASS", pf_path)
 
@@ -1115,14 +1237,23 @@ API base:  {auth_cfg['base_url']}
         )
         return cl.print_summary()
 
-    # --- 6. Kafka paymentFinished (если create пропускали — всё равно сформируем) ---
+    # --- 6. Kafka messages (если create пропускали — всё равно сформируем) ---
     if args.skip_create:
+        _, sd_path = write_kafka_signing_docs(app_id, env_cfg)
+        cl.add("Сформирован SigningDocs JSON", "PASS", sd_path)
         _, pf_path = write_kafka_payment_finished(app_id, env_cfg)
         cl.add("Сформирован paymentFinished JSON", "PASS", pf_path)
     cl.add(
+        "Kafka: отправить SigningDocs",
+        "MANUAL",
+        f"SigningDocs_{app_id}.json → Produce в {KAFKA_INBOUND_TOPIC} "
+        f"(не {KAFKA_OUTBOUND_TOPIC}; запасной {KAFKA_INBOUND_TOPIC_ALT})",
+    )
+    cl.add(
         "Kafka: отправить paymentFinished",
         "MANUAL",
-        f"файл paymentFinished_{app_id}.json → Produce в ump.process.to.system (~5 мин)",
+        f"paymentFinished_{app_id}.json → Produce в {KAFKA_INBOUND_TOPIC} "
+        f"после старта оплаты (~5 мин)",
     )
 
     # --- 7. Ручные проверки NCINS-143 ---
@@ -1165,7 +1296,8 @@ API base:  {auth_cfg['base_url']}
         + (f" --app-number {app_number}" if app_number else "")
         + "\n"
     )
-    # В самом конце — ещё раз чистый JSON, чтобы не искать глазами выше
+    # В самом конце — ещё раз чистые JSON, чтобы не искать глазами выше
+    print_copy_signing_docs_again(app_id)
     print_copy_payment_finished_again(app_id)
     return cl.print_summary()
 
