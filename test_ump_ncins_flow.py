@@ -672,6 +672,36 @@ def print_json(title: str, data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
+def print_kafka_payment_finished(app_id: str, env_cfg: dict[str, Any]) -> None:
+    """
+    Процесс оплаты ждёт message paymentFinished в Kafka (топик ump.process.to.system).
+    В BPMN таймаут PT5M — если не отправить, оплата уходит в Canceled/TIMEOUT.
+    """
+    payload = {
+        "messageName": "paymentFinished",
+        "correlationKey": f"{app_id}.NON_CREDIT_INSURANCE",
+        "variables": {
+            "id": app_id,
+            "outputVariables": {},
+        },
+    }
+    print(
+        f"""
+========== KAFKA: снять стоп на «Процесс оплаты» ==========
+Топик: ump.process.to.system
+UI:    {env_cfg.get('kafka')}
+{('UI alt: ' + env_cfg['kafka_alt']) if env_cfg.get('kafka_alt') else ''}
+
+ВАЖНО: на отправку ~5 минут (PT5M в BPMN). Иначе оплата Canceled/TIMEOUT,
+финализация и GET /v1/contracts не случится.
+
+Вставь в Produce этого топика JSON:
+"""
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print()
+
+
 def print_manual_operate_steps(app_id: str, channel: str, env_cfg: dict[str, Any]) -> None:
     expected = "nib-corp-ncins" if channel == "nib" else "sfa-ncins"
     operate_alt = env_cfg.get("operate_alt")
@@ -701,12 +731,14 @@ Kafka:   {env_cfg['kafka']}
    → Call Activity ump-generate-and-save-document-pa отрабатывает (NCINS-143)
 
 4) «Подписание» (ump-signing-documents-ncins-pa)
-   → Input с AFTER_SIGNING
+   → Input с AFTER_SIGNING / Kafka SigningDocs
 
-5) Дойти до /v1/ins-contracts (финализация)
-   На INT/TEST может стопориться на «Сохранить документы в ЭА» — для полного флоу лучше DEV.
+5) «Процесс оплаты» — стоп на receive paymentFinished
+   → в Kafka ump.process.to.system отправь paymentFinished (скрипт печатает JSON)
+   → уложись в ~5 минут, иначе Canceled
 
-6) Kafka топик ump.process.to.system — сообщения по твоей заявке
+6) «Финализация» → POST /v1/ins-contracts (создание договора в Учёте)
+   → потом GET /v1/contracts
 """
     )
 
@@ -1042,7 +1074,15 @@ API base:  {auth_cfg['base_url']}
         )
         return cl.print_summary()
 
-    # --- 6. Ручные проверки NCINS-143 ---
+    # --- 6. Kafka paymentFinished (нужно до таймаута оплаты) ---
+    print_kafka_payment_finished(app_id, env_cfg)
+    cl.add(
+        "Kafka: отправить paymentFinished",
+        "MANUAL",
+        f"correlationKey={app_id}.NON_CREDIT_INSURANCE (успеть ~5 мин)",
+    )
+
+    # --- 7. Ручные проверки NCINS-143 ---
     print_manual_operate_steps(app_id, args.channel, env_cfg)
     cl.add(
         "Operate: дедупликация на регистрации игнорируется",
@@ -1065,9 +1105,9 @@ API base:  {auth_cfg['base_url']}
         "ump-finalisation-ncins-pa шаг «Создать договор» Completed",
     )
     cl.add(
-        "Kafka: ump.process.to.system по заявке",
+        "GET /v1/contracts после финализации",
         "MANUAL",
-        env_cfg["kafka"],
+        f"python ump.py --env {args.env} --auth corporate --contracts-only --app-id {app_id}",
     )
 
     print(
