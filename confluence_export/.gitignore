@@ -1,0 +1,9 @@
+confluence_pdfs_*/
+confluence_pages_cache_*.json
+pages_index.json
+*.pdf
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
