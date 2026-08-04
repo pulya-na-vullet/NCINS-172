@@ -1092,13 +1092,14 @@ API base:  {auth_cfg['base_url']}
         )
         return cl.print_summary()
 
-    # --- 6. Kafka paymentFinished (если не напечатали сразу после create) ---
+    # --- 6. Kafka paymentFinished (если create пропускали — всё равно сформируем) ---
     if args.skip_create:
-        print_kafka_payment_finished(app_id, env_cfg)
+        _, pf_path = write_kafka_payment_finished(app_id, env_cfg)
+        cl.add("Сформирован paymentFinished JSON", "PASS", pf_path)
     cl.add(
         "Kafka: отправить paymentFinished",
         "MANUAL",
-        f"correlationKey={app_id}.NON_CREDIT_INSURANCE (успеть ~5 мин)",
+        f"файл paymentFinished_{app_id}.json → Produce в ump.process.to.system (~5 мин)",
     )
 
     # --- 7. Ручные проверки NCINS-143 ---
