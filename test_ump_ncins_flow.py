@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
 """
-NCINS / UMP E2E helper для NIB.
+NCINS-143: автопроверка флоу UMP (НИБ).
 
-Важно: токен и API должны быть из одной системы.
-  - corporate JWT  → corp-gateway (corp-ncins-*-api)     ✅ уже работало у тебя
-  - UMP Keycloak JWT → ump-application-facade           ❌ нельзя слать в corp-gateway
-    (иначе 401 Jwt issuer is not configured)
+ДВА РАЗНЫХ ТОКЕНА — НЕ СМЕШИВАТЬ:
 
-Два режима:
-  1) --auth corporate  (по умолчанию) curl лида → corp-gateway /v1/applications
-  2) --auth ump        Keycloak UMP nib-corp-ncins → application-facade /applications
-                       DEV/QA: + POST /applications/list; TEST: create only
+  A) Keycloak UMP (прислал лид Яковлев)  →  ump-application-facade
+     client_id = nib-corp-ncins
+     POST /applications  (+ /applications/list на DEV/QA)
 
-GET /applications/{id} у NIB нет в правах → 403. Читаем через list.
+  B) Corporate Keycloak (прислал разработчик)  →  corp-gateway НИБ
+     client_id = nib-corp-ncinsurance
+     POST /v1/applications
+
+Если UMP-токен слать в corp-gateway → 401 Jwt issuer is not configured.
 
 Примеры:
-  python ump.py --env dev --auth corporate --channel nib
-  python ump.py --env dev --auth ump --channel nib
-  python ump.py --env dev --auth ump --base-url http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net
-  python ump.py --dry-run
+  # то, что сказал лид (правильный токен для UMP) — РЕКОМЕНДУЕТСЯ
+  python test_ump_ncins_flow.py --env dev --auth ump --channel nib
+
+  # токен разработчика → corp-gateway
+  python test_ump_ncins_flow.py --env dev --auth corporate --channel nib
+
+  # только проверить, что токен берётся
+  python test_ump_ncins_flow.py --env dev --auth ump --token-only
+
+  # посмотреть payload без запросов
+  python test_ump_ncins_flow.py --dry-run
 """
 
 from __future__ import annotations
@@ -27,14 +34,18 @@ import argparse
 import json
 import sys
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 import requests
 import urllib3
 
-# self-signed / corporate CA на keycloak UMP
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ---------------------------------------------------------------------------
+# Конфиги стендов
+# ---------------------------------------------------------------------------
 
 ENVIRONMENTS: dict[str, dict[str, Any]] = {
     "dev": {
@@ -43,7 +54,9 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "https://akhq.umpqak8sm1.moscow.alfaintra.net/ui/ump-kafka-cluster/"
             "topic/ump.process.to.system/data?sort=Newest&partition=All"
         ),
+        # B) токен разработчика → corp-gateway
         "corporate": {
+            "label": "Corporate Keycloak (curl разработчика) → corp-gateway",
             "token_url": (
                 "http://corp-gateway-dev.moscow.alfaintra.net/mks-gateway/public/auth/"
                 "realms/corporate/protocol/openid-connect/token"
@@ -52,9 +65,18 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "client_secret": "nib_corp_ncinsurance",
             "base_url": (
                 "http://corp-gateway-dev.moscow.alfaintra.net/"
-                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
             ),
-            # corp-ncins proxy обычно с /v1
+            "base_url_candidates": [
+                (
+                    "http://corp-gateway-dev.moscow.alfaintra.net/"
+                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                ),
+                (
+                    "http://corp-gateway-dev.moscow.alfaintra.net/"
+                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                ),
+            ],
             "paths": {
                 "create": "/v1/applications",
                 "list": "/v1/applications/list",
@@ -63,8 +85,9 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "can_list": True,
             "verify_ssl": True,
         },
+        # A) токен лида → UMP facade
         "ump": {
-            # НИБ Keycloak UMP / DEV — токен ТОЛЬКО для application-facade, не для corp-gateway
+            "label": "Keycloak UMP (curl лида) → ump-application-facade",
             "token_url": (
                 "https://keycloak.umpdevwk8sm1.moscow.alfaintra.net/"
                 "realms/ump/protocol/openid-connect/token"
@@ -72,14 +95,12 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "client_id": "nib-corp-ncins",
             "client_secret": "OlcnSVnz3UiORtl4XfJZ3NRRZlqw7QPY",
             "base_url": "http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
-            # если host другой — передай --base-url (из Postman / Confluence)
             "base_url_candidates": [
                 "http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
                 "https://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
                 "http://umpdevwk8sm1.moscow.alfaintra.net/ump-application-facade",
                 "https://umpdevwk8sm1.moscow.alfaintra.net/ump-application-facade",
             ],
-            # контракт facade: /applications (без /v1)
             "paths": {
                 "create": "/applications",
                 "list": "/applications/list",
@@ -97,6 +118,7 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "topic/ump.process.to.system/data?sort=Newest&partition=All"
         ),
         "corporate": {
+            "label": "Corporate Keycloak → corp-gateway (QA/INT)",
             "token_url": (
                 "http://corp-gateway-test.moscow.alfaintra.net/mks-gateway/public/auth/"
                 "realms/corporate/protocol/openid-connect/token"
@@ -105,8 +127,18 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "client_secret": "nib_corp_ncinsurance",
             "base_url": (
                 "http://corp-gateway-test.moscow.alfaintra.net/"
-                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
             ),
+            "base_url_candidates": [
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                ),
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                ),
+            ],
             "paths": {
                 "create": "/v1/applications",
                 "list": "/v1/applications/list",
@@ -116,6 +148,7 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "verify_ssl": True,
         },
         "ump": {
+            "label": "Keycloak UMP QA → ump-application-facade",
             "token_url": (
                 "https://keycloak.umpqak8sm1.moscow.alfaintra.net/"
                 "realms/ump/protocol/openid-connect/token"
@@ -146,7 +179,7 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "topic/ump.process.to.system/data?sort=Newest&partition=All"
         ),
         "corporate": {
-            # curl от лида
+            "label": "Corporate Keycloak (curl разработчика) → corp-gateway TEST",
             "token_url": (
                 "http://corp-gateway-test.moscow.alfaintra.net/mks-gateway/public/auth/"
                 "realms/corporate/protocol/openid-connect/token"
@@ -155,8 +188,18 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "client_secret": "nib_corp_ncinsurance",
             "base_url": (
                 "http://corp-gateway-test.moscow.alfaintra.net/"
-                "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
             ),
+            "base_url_candidates": [
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-acc-gateway/secure/corp-ncins-acc-corp-ncins-acc-api"
+                ),
+                (
+                    "http://corp-gateway-test.moscow.alfaintra.net/"
+                    "corp-ncins-gateway/secure/corp-ncins-corp-ncins-api"
+                ),
+            ],
             "paths": {
                 "create": "/v1/applications",
                 "list": "/v1/applications/list",
@@ -166,7 +209,7 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "verify_ssl": True,
         },
         "ump": {
-            # TEST: только POST /applications
+            "label": "Keycloak UMP TEST → facade (только POST /applications)",
             "token_url": (
                 "https://idp-api-test.alfaintra.net/auth/realms/ump/"
                 "protocol/openid-connect/token"
@@ -190,12 +233,57 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Чеклист PASS / FAIL / MANUAL
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CheckResult:
+    name: str
+    status: str  # PASS | FAIL | WARN | MANUAL | SKIP
+    detail: str = ""
+
+
+@dataclass
+class Checklist:
+    items: list[CheckResult] = field(default_factory=list)
+
+    def add(self, name: str, status: str, detail: str = "") -> None:
+        self.items.append(CheckResult(name, status, detail))
+        mark = {"PASS": "OK", "FAIL": "FAIL", "WARN": "WARN", "MANUAL": "???", "SKIP": "--"}
+        prefix = mark.get(status, status)
+        line = f"[{prefix}] {name}"
+        if detail:
+            line += f" — {detail}"
+        print(line)
+
+    def print_summary(self) -> int:
+        print("\n========== ИТОГ ЧЕКЛИСТА ==========")
+        counts = {"PASS": 0, "FAIL": 0, "WARN": 0, "MANUAL": 0, "SKIP": 0}
+        for item in self.items:
+            counts[item.status] = counts.get(item.status, 0) + 1
+            print(f"  {item.status:6} | {item.name}")
+            if item.detail:
+                print(f"         {item.detail}")
+        print(
+            f"\nPASS={counts['PASS']} FAIL={counts['FAIL']} "
+            f"WARN={counts['WARN']} MANUAL={counts['MANUAL']} SKIP={counts['SKIP']}"
+        )
+        return 1 if counts["FAIL"] else 0
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def build_create_payload(channel: str) -> dict[str, Any]:
-    """Полный payload, чтобы prepare смог собрать documents[] для AlfaCapture."""
+    """Payload мультизаявки (как в инструкции; уникальный extAppId каждый раз)."""
     ext_id = str(uuid.uuid4())
     system_code = "NIB" if channel == "nib" else "SFA"
     doc_link = str(uuid.uuid4())
@@ -265,14 +353,13 @@ def get_token(
     verify_ssl: bool = True,
     timeout: int = 60,
 ) -> str:
-    data = {
-        "grant_type": "client_credentials",
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
     resp = requests.post(
         token_url,
-        data=data,
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=timeout,
         verify=verify_ssl,
@@ -281,7 +368,7 @@ def get_token(
         raise RuntimeError(f"TOKEN {resp.status_code}: {resp.text[:1000]}")
     token = resp.json().get("access_token")
     if not token:
-        raise RuntimeError(f"В ответе token нет access_token: {resp.text[:500]}")
+        raise RuntimeError(f"Нет access_token в ответе: {resp.text[:500]}")
     return token
 
 
@@ -306,9 +393,13 @@ def create_application(
     timeout: int = 120,
 ) -> dict[str, Any]:
     url = f"{base_url.rstrip('/')}{create_path}"
-    params = {"finalVersion": "true", "fullCreate": "true"}
     resp = requests.post(
-        url, headers=headers, params=params, json=payload, timeout=timeout, verify=verify_ssl
+        url,
+        headers=headers,
+        params={"finalVersion": "true", "fullCreate": "true"},
+        json=payload,
+        timeout=timeout,
+        verify=verify_ssl,
     )
     if resp.status_code >= 400:
         raise RuntimeError(f"CREATE {resp.status_code}: {resp.text[:2000]}")
@@ -324,7 +415,6 @@ def list_applications(
     verify_ssl: bool = True,
     timeout: int = 60,
 ) -> tuple[dict[str, Any] | None, str]:
-    """POST /applications/list."""
     url = f"{base_url.rstrip('/')}{list_path}"
     resp = requests.post(
         url,
@@ -341,10 +431,6 @@ def list_applications(
 
 
 def corp_list_bodies(app_id: str, number: str | None) -> list[dict[str, Any]]:
-    """
-    corp-ncins DTO = GetApplicationsUmpPostRequestDto — НЕ facade {filter:{...}}.
-    Пробуем типичные варианты, пока не найдём рабочий / не пришлёшь schema из Postman.
-    """
     bodies: list[dict[str, Any]] = []
     if app_id:
         bodies.extend(
@@ -369,7 +455,6 @@ def corp_list_bodies(app_id: str, number: str | None) -> list[dict[str, Any]]:
 
 
 def ump_list_bodies(number: str | None) -> list[dict[str, Any]]:
-    """Контракт ump-application-facade: filter.applicationFilter."""
     bodies: list[dict[str, Any]] = []
     if number:
         bodies.append({"filter": {"applicationFilter": {"number": number}}})
@@ -401,10 +486,6 @@ def try_read_application(
     app_id: str,
     number: str | None,
 ) -> tuple[dict[str, Any] | None, list[str]]:
-    """
-    NIB: GET /applications/{id} не в правах → 403.
-    Читаем через POST /applications/list (схема тела зависит от auth).
-    """
     attempts: list[str] = []
     base = auth_cfg["base_url"]
     paths = auth_cfg["paths"]
@@ -412,11 +493,10 @@ def try_read_application(
 
     if not auth_cfg.get("can_list", True):
         attempts.append(
-            "list недоступен для этого стенда/клиента (на TEST у nib-corp-ncins только POST /applications)"
+            "list недоступен (на TEST у nib-corp-ncins только POST /applications)"
         )
         return None, attempts
 
-    list_path = paths["list"]
     bodies = (
         corp_list_bodies(app_id, number)
         if auth_mode == "corporate"
@@ -425,24 +505,22 @@ def try_read_application(
 
     for body in bodies:
         data, msg = list_applications(
-            base, list_path, headers, body, verify_ssl=verify
+            base, paths["list"], headers, body, verify_ssl=verify
         )
         attempts.append(f"LIST {msg}")
         if data is None:
-            # невалидное поле — пробуем следующий body
             continue
         found = pick_from_list_response(data, app_id)
         if found:
             return found, attempts
 
-    # GET только для диагностики — ожидаем 403, не считаем ошибкой скрипта
     get_path = paths.get("get", "/v1/applications/{id}").format(id=app_id)
     get_url = f"{base.rstrip('/')}{get_path}"
     try:
         resp = requests.get(get_url, headers=headers, timeout=30, verify=verify)
         attempts.append(
             f"GET {resp.status_code} {get_url} "
-            f"(ожидаемо 403 у NIB) -> {resp.text[:160]}"
+            f"(у NIB часто 403 — это нормально) -> {resp.text[:160]}"
         )
     except requests.RequestException as exc:
         attempts.append(f"GET network error: {exc}")
@@ -454,155 +532,80 @@ def extract_channel_codes(app: dict[str, Any]) -> list[str]:
     return [c.get("code") for c in app.get("channels") or [] if c.get("code")]
 
 
-def summarize_app(app: dict[str, Any]) -> dict[str, Any]:
-    products_summary = []
-    for p in app.get("products") or []:
-        props = p.get("productProperties")
-        products_summary.append(
-            {
-                "id": p.get("id"),
-                "code": p.get("code"),
-                "status": (p.get("status") or {}).get("code"),
-                "hasProductProperties": bool(props),
-                "productPropertiesKeys": sorted(props.keys()) if isinstance(props, dict) else [],
-            }
-        )
-
-    participants_summary = []
-    for part in app.get("participants") or []:
-        contacts = part.get("contacts") or []
-        emails = [c.get("value") for c in contacts if c.get("type") == "EMAIL"]
-        participants_summary.append(
-            {
-                "pin": part.get("pin"),
-                "hasContacts": bool(contacts),
-                "emails": emails,
-            }
-        )
-
-    return {
-        "id": app.get("id"),
-        "number": app.get("number"),
-        "statusCode": app.get("statusCode"),
-        "finalVersion": app.get("finalVersion"),
-        "channels": extract_channel_codes(app),
-        "participants": participants_summary,
-        "products": products_summary,
-        "note": (
-            "list возвращает урезанный ApplicationMain — "
-            "productProperties/contacts могут отсутствовать даже если они есть в UMP"
-        ),
-    }
-
-
-def warn_incomplete_create(app: dict[str, Any]) -> None:
-    summary = summarize_app(app)
-    problems: list[str] = []
-
-    if summary.get("statusCode") == "DRAFT":
-        problems.append(
-            "statusCode=DRAFT (в create-ответе так бывает даже при finalVersion=true; "
-            "смотри процессы в Operate)"
-        )
-
-    for p in summary.get("products") or []:
-        if not p.get("hasProductProperties"):
-            problems.append(
-                "в ответе нет products[].productProperties — "
-                "list/create могут не отдавать их; проверь prepare в Operate"
-            )
-
-    for part in summary.get("participants") or []:
-        if not part.get("emails"):
-            problems.append(
-                "в ответе нет EMAIL — list часто без contacts; "
-                "если prepare падает на email, данные реально не сохранились"
-            )
-
-    if not problems:
-        print("\nOK: в ответе есть полезные поля для проверки.")
-        return
-
-    print("\n=== WARN по create/list ответу ===")
-    for item in problems:
-        print(f"- {item}")
-
-
 def print_json(title: str, data: Any) -> None:
     print(f"\n=== {title} ===")
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def print_operate_checklist(app_id: str, channel: str, env_cfg: dict[str, Any]) -> None:
-    expected_channel = "nib-corp-ncins" if channel == "nib" else "sfa-ncins"
+def print_manual_operate_steps(app_id: str, channel: str, env_cfg: dict[str, Any]) -> None:
+    expected = "nib-corp-ncins" if channel == "nib" else "sfa-ncins"
     print(
         f"""
-=== Что смотреть в Operate ===
+========== РУЧНЫЕ ПРОВЕРКИ В OPERATE (скрипт сам это не увидит) ==========
 Operate: {env_cfg['operate']}
 Kafka:   {env_cfg['kafka']}
-
 businessKey / application id: {app_id}
-Ожидаемый channels[].code: {expected_channel}
+Ожидаемый channels[].code: {expected}
 
-Порядок процессов:
-1) ump-app-reg-pa
-2) ump-main-ma-ncins-pa
-3) ump-prepare-documents-ncins-pa  -> docsResult / acDocuments
-4) ump-generate-and-save-document-pa  <-- NCINS-143
-5) ump-signing-documents-ncins-pa
-6) ump-payment-ncins-pa
-7) ump-finalisation-ncins-pa
+1) Найди процесс по businessKey = {app_id}
+
+2) «Регистрация заявки» (ump-app-reg-pa)
+   → дедупликация должна ИГНОРИРОВАТЬСЯ (повторный create не должен стопорить флоу)
+
+3) «Подготовка документов» (ump-prepare-documents-ncins-pa)
+   → в Variables есть массив acDocuments
+   → Input: productUpdateType / AFTER_PREPARE_DOCS на шаге обновления продукта
+   → Call Activity ump-generate-and-save-document-pa отрабатывает (NCINS-143)
+
+4) «Подписание» (ump-signing-documents-ncins-pa)
+   → Input с AFTER_SIGNING
+
+5) Дойти до /v1/ins-contracts (финализация)
+   На INT/TEST может стопориться на «Сохранить документы в ЭА» — для полного флоу лучше DEV.
+
+6) Kafka топик ump.process.to.system — сообщения по твоей заявке
 """
     )
 
 
-def print_auth_help() -> None:
-    print(
-        """
-=== Авторизация NIB (не смешивай токен и API) ===
-corporate JWT  →  corp-gateway /v1/applications
-  --auth corporate  client_id=nib-corp-ncinsurance  (curl от лида)
-  Это рабочий путь для создания заявки через NIB proxy.
-
-UMP Keycloak JWT  →  ump-application-facade /applications
-  --auth ump  client_id=nib-corp-ncins
-  DEV/QA: POST /applications + POST /applications/list
-  TEST: только POST /applications
-  НЕ слать UMP-токен в corp-gateway → 401 Jwt issuer is not configured
-
-GET /applications/{id} у NIB нет → 403 RBAC (ожидаемо). Читай через list.
-"""
-    )
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="NCINS UMP create + list + Camunda helpers")
+    parser = argparse.ArgumentParser(
+        description="NCINS-143: токен → create → channel → чеклист Operate"
+    )
     parser.add_argument("--env", choices=["dev", "qa", "test"], default="dev")
     parser.add_argument(
         "--auth",
         choices=["ump", "corporate"],
-        default="corporate",
-        help="corporate = curl лида → corp-gateway (по умолчанию); ump = Keycloak UMP → facade",
+        default="ump",
+        help="ump = токен лида (по умолчанию); corporate = токен разработчика",
     )
     parser.add_argument("--channel", choices=["nib", "sfa"], default="nib")
-    parser.add_argument("--client-id", default="", help="Override client_id")
-    parser.add_argument("--client-secret", default="", help="Override client_secret")
+    parser.add_argument("--client-id", default="")
+    parser.add_argument("--client-secret", default="")
     parser.add_argument("--token-url", default="")
     parser.add_argument("--base-url", default="", help="Override API base URL")
     parser.add_argument("--token", default="", help="Готовый Bearer token")
-    parser.add_argument("--skip-create", action="store_true")
     parser.add_argument(
-        "--skip-get",
+        "--token-only",
         action="store_true",
-        help="Не читать заявку (ни list, ни get)",
+        help="Только получить токен и выйти (проверка auth)",
     )
-    parser.add_argument("--app-id", default="", help="UUID заявки, если --skip-create")
-    parser.add_argument("--app-number", default="", help="Номер заявки для list, напр. UMP26080447600")
+    parser.add_argument("--skip-create", action="store_true")
+    parser.add_argument("--skip-get", action="store_true")
+    parser.add_argument("--app-id", default="")
+    parser.add_argument("--app-number", default="")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    cl = Checklist()
     env_cfg = ENVIRONMENTS[args.env]
     auth_cfg = dict(env_cfg[args.auth])
+
     if args.base_url:
         auth_cfg["base_url"] = args.base_url
     if args.token_url:
@@ -611,69 +614,79 @@ def main() -> int:
         auth_cfg["client_id"] = args.client_id
     if args.client_secret:
         auth_cfg["client_secret"] = args.client_secret
-
-    if args.channel == "sfa" and not args.base_url:
+    if args.channel == "sfa" and not args.base_url and args.auth == "corporate":
+        # SFA идёт через свой gateway, не через NIB corp
         auth_cfg["base_url"] = env_cfg["sfa_base_url"]
+        auth_cfg["base_url_candidates"] = [env_cfg["sfa_base_url"]]
 
-    print_auth_help()
+    expected_channel = "nib-corp-ncins" if args.channel == "nib" else "sfa-ncins"
+
     print(
-        f"env={args.env} auth={args.auth} "
-        f"client_id={auth_cfg['client_id']} base={auth_cfg['base_url']}"
+        f"""
+========== NCINS-143 smoke / e2e helper ==========
+Стенд:     {args.env}
+Auth:      {args.auth} — {auth_cfg.get('label', '')}
+client_id: {auth_cfg['client_id']}
+token_url: {auth_cfg['token_url']}
+API base:  {auth_cfg['base_url']}
+Канал:     {args.channel} → ждём channels[].code = {expected_channel}
+"""
     )
 
     payload = build_create_payload(args.channel)
-    print_json("CREATE payload", payload)
-
-    prepare_start = {
-        "businessKey": args.app_id or "<application-id>",
-        "productCode": "NON_CREDIT_INSURANCE",
-    }
-    generate_start = {
-        "serviceId": args.app_id or "<application-id>",
-        "serviceCode": "APPLICATION",
-        "productCode": "NON_CREDIT_INSURANCE",
-        "documents": [
-            {
-                "documentType": "CONTRACT_ACCOUNT_BLOCK",
-                "reportData": (
-                    "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48ZGF0YXNvdXJjZT4"
-                    "PGNvbnRyYWN0TnVtYmVyPnRlc3Q8L2NvbnRyYWN0TnVtYmVyPjwvZGF0YXNvdXJjZT4="
-                ),
-                "isWriteInEa": False,
-            }
-        ],
-    }
-    print_json("Start JSON для ump-prepare-documents-ncins-pa", prepare_start)
-    print_json("Start JSON для ump-generate-and-save-document-pa", generate_start)
-
     if args.dry_run:
-        print("\nDry-run: запросы в API не отправлялись.")
-        return 0
+        print_json("CREATE payload (dry-run)", payload)
+        print("Dry-run: запросы не отправлялись.")
+        cl.add("dry-run", "SKIP", "запросы не отправлялись")
+        return cl.print_summary()
 
     verify = auth_cfg.get("verify_ssl", True)
-    if args.token:
-        token = args.token
-    else:
-        print(f"\nПолучаю token ({args.auth}): {auth_cfg['token_url']}")
-        print(f"client_id={auth_cfg['client_id']}")
-        token = get_token(
-            auth_cfg["token_url"],
-            auth_cfg["client_id"],
-            auth_cfg["client_secret"],
-            verify_ssl=verify,
-        )
+
+    # --- 1. Токен ---
+    print("\n--- ШАГ 1. Получить токен ---")
+    try:
+        if args.token:
+            token = args.token
+            cl.add("Получение токена", "PASS", "использован --token")
+        else:
+            print(f"POST {auth_cfg['token_url']}")
+            print(f"client_id={auth_cfg['client_id']}")
+            token = get_token(
+                auth_cfg["token_url"],
+                auth_cfg["client_id"],
+                auth_cfg["client_secret"],
+                verify_ssl=verify,
+            )
+            cl.add(
+                "Получение токена",
+                "PASS",
+                f"access_token длина={len(token)}, client_id={auth_cfg['client_id']}",
+            )
+            print(f"access_token (первые 40 символов): {token[:40]}...")
+    except Exception as exc:  # noqa: BLE001
+        cl.add("Получение токена", "FAIL", str(exc))
+        return cl.print_summary()
+
+    if args.token_only:
+        print("\n--token-only: дальше не идём.")
+        cl.add("CREATE заявки", "SKIP", "--token-only")
+        cl.add("channels", "SKIP", "--token-only")
+        return cl.print_summary()
 
     headers = default_headers(token, args.channel)
     app: dict[str, Any]
+    app_id: str
     app_number = args.app_number or None
 
+    # --- 2. CREATE ---
+    print("\n--- ШАГ 2. Создать мультизаявку ---")
     if args.skip_create:
         if not args.app_id:
-            print("--skip-create требует --app-id", file=sys.stderr)
-            return 2
+            cl.add("CREATE заявки", "FAIL", "--skip-create требует --app-id")
+            return cl.print_summary()
         app_id = args.app_id
-        print(f"\nПропускаю create, app_id={app_id}")
         app = {"id": app_id, "number": app_number}
+        cl.add("CREATE заявки", "SKIP", f"используем --app-id={app_id}")
     else:
         create_path = auth_cfg["paths"]["create"]
         bases: list[str] = []
@@ -689,16 +702,10 @@ def main() -> int:
         last_error: Exception | None = None
         for base in bases:
             auth_cfg["base_url"] = base
-            print(
-                f"\nCREATE {base}{create_path}?finalVersion=true&fullCreate=true"
-            )
+            print(f"\nCREATE {base}{create_path}?finalVersion=true&fullCreate=true")
             try:
                 created = create_application(
-                    base,
-                    create_path,
-                    headers,
-                    payload,
-                    verify_ssl=verify,
+                    base, create_path, headers, payload, verify_ssl=verify
                 )
                 break
             except RuntimeError as exc:
@@ -707,10 +714,14 @@ def main() -> int:
                 print(f"  -> {exc}")
                 if "Jwt issuer is not configured" in err:
                     print(
-                        "  Подсказка: UMP JWT нельзя слать в corp-gateway. "
-                        "Для corp-gateway используй: --auth corporate\n"
-                        "  Для UMP JWT нужен host ump-application-facade "
-                        "(или правильный --base-url из Postman)."
+                        "  !!! UMP JWT нельзя слать в corp-gateway.\n"
+                        "      Нужно: --auth ump   (токен лида → facade)\n"
+                        "      Или:   --auth corporate  (токен разработчика → corp-gateway)"
+                    )
+                    cl.add(
+                        "Совпадение токен↔API",
+                        "FAIL",
+                        "UMP JWT в corp-gateway (Jwt issuer is not configured)",
                     )
                 continue
             except requests.RequestException as exc:
@@ -719,25 +730,52 @@ def main() -> int:
                 continue
 
         if created is None:
-            raise RuntimeError(
-                f"CREATE не удался на всех base_url. Последняя ошибка: {last_error}\n"
-                f"Рабочий вариант: python ump.py --env {args.env} --auth corporate --channel nib"
+            cl.add("CREATE заявки", "FAIL", str(last_error))
+            cl.add(
+                "Подсказка",
+                "WARN",
+                f"попробуй другой --auth или --base-url; сейчас auth={args.auth}",
             )
+            return cl.print_summary()
 
         print_json("CREATE response", created)
-        app_id = created.get("id")
+        app_id = created.get("id") or ""
         app_number = created.get("number") or app_number
         if not app_id:
-            print("В ответе create нет id", file=sys.stderr)
-            return 1
+            cl.add("CREATE заявки", "FAIL", "в ответе нет id")
+            return cl.print_summary()
         app = created
-        warn_incomplete_create(created)
-
-    if not args.skip_get:
-        print(
-            f"\nЧитаю заявку через POST /applications/list "
-            f"(GET /{{id}} у NIB нет в правах)"
+        cl.add(
+            "CREATE заявки",
+            "PASS",
+            f"id={app_id}" + (f", number={app_number}" if app_number else ""),
         )
+        cl.add("Совпадение токен↔API", "PASS", f"auth={args.auth}, base={auth_cfg['base_url']}")
+
+    # --- 3. channels ---
+    print("\n--- ШАГ 3. Проверить channels ---")
+    channels = extract_channel_codes(app)
+    if channels:
+        if expected_channel in channels:
+            cl.add("channels в create-ответе", "PASS", f"{channels}")
+        else:
+            cl.add(
+                "channels в create-ответе",
+                "FAIL",
+                f"ожидали {expected_channel}, получили {channels}",
+            )
+    else:
+        cl.add(
+            "channels в create-ответе",
+            "WARN",
+            "в create-ответе нет channels — проверим после list / в Operate",
+        )
+
+    # --- 4. LIST / read ---
+    print("\n--- ШАГ 4. Прочитать заявку (list) ---")
+    if args.skip_get:
+        cl.add("Чтение заявки (list)", "SKIP", "--skip-get")
+    else:
         fetched, attempts = try_read_application(
             auth_cfg,
             headers,
@@ -748,37 +786,62 @@ def main() -> int:
         for line in attempts:
             print(f"  try: {line}")
         if fetched is None:
-            print(
-                "\nlist/get не дали полную заявку. Это не блокер: "
-                "бери application id из CREATE и смотри Operate."
+            cl.add(
+                "Чтение заявки (list)",
+                "WARN",
+                "list/get не дали заявку — смотри Operate по id из CREATE",
             )
         else:
             app = fetched
-            print_json("LIST/read (short checks)", summarize_app(app))
-            warn_incomplete_create(app)
-    else:
-        print("\n--skip-get: чтение заявки пропущено")
+            print_json("LIST item", app)
+            channels = extract_channel_codes(app)
+            cl.add("Чтение заявки (list)", "PASS", f"id={app.get('id')}, channels={channels}")
+            if channels:
+                if expected_channel in channels:
+                    cl.add("channels после list", "PASS", f"{channels}")
+                else:
+                    cl.add(
+                        "channels после list",
+                        "FAIL",
+                        f"ожидали {expected_channel}, получили {channels}",
+                    )
 
-    prepare_start["businessKey"] = app_id
-    generate_start["serviceId"] = app_id
-    print_json("Start JSON prepare (готово)", prepare_start)
-    print_json("Start JSON generate (готово)", generate_start)
-
-    channels = extract_channel_codes(app if isinstance(app, dict) else {})
-    expected = "nib-corp-ncins" if args.channel == "nib" else "sfa-ncins"
-    if channels:
-        if expected in channels:
-            print(f"OK channel: {expected}")
-        else:
-            print(f"WARN channel: ожидали {expected}, получили {channels}")
-
-    print_operate_checklist(app_id, args.channel, env_cfg)
-    print(
-        f"\nГотово. application id = {app_id}"
-        + (f", number = {app_number}" if app_number else "")
-        + f"\nOperate businessKey={app_id}"
+    # --- 5. Ручные проверки NCINS-143 ---
+    print_manual_operate_steps(app_id, args.channel, env_cfg)
+    cl.add(
+        "Operate: дедупликация на регистрации игнорируется",
+        "MANUAL",
+        "ump-app-reg-pa",
     )
-    return 0
+    cl.add(
+        "Operate: acDocuments в prepare-documents",
+        "MANUAL",
+        "ump-prepare-documents-ncins-pa → Variables.acDocuments",
+    )
+    cl.add(
+        "Operate: AFTER_PREPARE_DOCS / AFTER_SIGNING в mappings",
+        "MANUAL",
+        "prepare + signing service-task-update-product",
+    )
+    cl.add(
+        "Operate: дойти до /v1/ins-contracts (generate-and-save)",
+        "MANUAL",
+        "ump-generate-and-save-document-pa / финализация",
+    )
+    cl.add(
+        "Kafka: ump.process.to.system по заявке",
+        "MANUAL",
+        env_cfg["kafka"],
+    )
+
+    print(
+        f"\nГотово.\n"
+        f"  application id = {app_id}\n"
+        f"  number         = {app_number or '(нет)'}\n"
+        f"  Operate        = {env_cfg['operate']}\n"
+        f"  businessKey    = {app_id}\n"
+    )
+    return cl.print_summary()
 
 
 if __name__ == "__main__":
