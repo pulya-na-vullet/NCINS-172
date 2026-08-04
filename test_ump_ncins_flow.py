@@ -14,18 +14,14 @@ NCINS-143: автопроверка флоу UMP (НИБ).
 
 Если UMP-токен слать в corp-gateway → 401 Jwt issuer is not configured.
 
-Примеры:
-  # то, что сказал лид (правильный токен для UMP) — РЕКОМЕНДУЕТСЯ
-  python test_ump_ncins_flow.py --env dev --auth ump --channel nib
+Примеры (для NCINS-143 / НИБ create — corporate):
+  python ump.py --env dev --auth corporate --channel nib
 
-  # токен разработчика → corp-gateway
-  python test_ump_ncins_flow.py --env dev --auth corporate --channel nib
+  # токен лида (UMP) — только если знаешь рабочий --base-url facade из Postman
+  python ump.py --env dev --auth ump --channel nib --base-url https://.../ump-application-facade
 
-  # только проверить, что токен берётся
-  python test_ump_ncins_flow.py --env dev --auth ump --token-only
-
-  # посмотреть payload без запросов
-  python test_ump_ncins_flow.py --dry-run
+  python ump.py --env dev --auth ump --token-only
+  python ump.py --dry-run
 """
 
 from __future__ import annotations
@@ -85,7 +81,7 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             "can_list": True,
             "verify_ssl": True,
         },
-        # A) токен лида → UMP facade
+        # A) токен лида → UMP facade (host снаружи часто 404 — нужен URL из Postman)
         "ump": {
             "label": "Keycloak UMP (curl лида) → ump-application-facade",
             "token_url": (
@@ -94,12 +90,18 @@ ENVIRONMENTS: dict[str, dict[str, Any]] = {
             ),
             "client_id": "nib-corp-ncins",
             "client_secret": "OlcnSVnz3UiORtl4XfJZ3NRRZlqw7QPY",
-            "base_url": "http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
+            # OpenAPI default + k8s-style hosts; при 404 передай --base-url из Postman
+            "base_url": "https://ump.alfabank.ru/ump-application-facade",
             "base_url_candidates": [
+                "https://ump.alfabank.ru/ump-application-facade",
                 "http://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
                 "https://ump-application-facade.umpdevwk8sm1.moscow.alfaintra.net",
+                "http://ump-application-facade.umpqak8sm1.moscow.alfaintra.net",
+                "https://ump-application-facade.umpqak8sm1.moscow.alfaintra.net",
                 "http://umpdevwk8sm1.moscow.alfaintra.net/ump-application-facade",
                 "https://umpdevwk8sm1.moscow.alfaintra.net/ump-application-facade",
+                "http://umpqak8sm1.moscow.alfaintra.net/ump-application-facade",
+                "https://umpqak8sm1.moscow.alfaintra.net/ump-application-facade",
             ],
             "paths": {
                 "create": "/applications",
@@ -581,8 +583,11 @@ def main() -> int:
     parser.add_argument(
         "--auth",
         choices=["ump", "corporate"],
-        default="ump",
-        help="ump = токен лида (по умолчанию); corporate = токен разработчика",
+        default="corporate",
+        help=(
+            "corporate = токен разработчика → corp-gateway (создание НИБ по NCINS-143); "
+            "ump = токен лида → facade (нужен рабочий --base-url)"
+        ),
     )
     parser.add_argument("--channel", choices=["nib", "sfa"], default="nib")
     parser.add_argument("--client-id", default="")
@@ -715,13 +720,21 @@ API base:  {auth_cfg['base_url']}
                 if "Jwt issuer is not configured" in err:
                     print(
                         "  !!! UMP JWT нельзя слать в corp-gateway.\n"
-                        "      Нужно: --auth ump   (токен лида → facade)\n"
-                        "      Или:   --auth corporate  (токен разработчика → corp-gateway)"
+                        "      Для create НИБ:  --auth corporate\n"
+                        "      Для facade UMP: --auth ump --base-url <URL из Postman>"
                     )
                     cl.add(
                         "Совпадение токен↔API",
                         "FAIL",
                         "UMP JWT в corp-gateway (Jwt issuer is not configured)",
+                    )
+                if "404" in err and args.auth == "ump":
+                    print(
+                        "  !!! 404 на facade: токен лида ОК, но host facade снаружи не тот.\n"
+                        "      1) Для NCINS-143 создавай заявку так:\n"
+                        "         python ump.py --env dev --auth corporate --channel nib\n"
+                        "      2) Если нужен именно facade — спроси у лида/из Postman\n"
+                        "         base URL и передай: --auth ump --base-url <URL>"
                     )
                 continue
             except requests.RequestException as exc:
@@ -731,11 +744,13 @@ API base:  {auth_cfg['base_url']}
 
         if created is None:
             cl.add("CREATE заявки", "FAIL", str(last_error))
-            cl.add(
-                "Подсказка",
-                "WARN",
-                f"попробуй другой --auth или --base-url; сейчас auth={args.auth}",
+            hint = (
+                "сейчас --auth ump → 404 на facade. Запусти: "
+                "--auth corporate --channel nib"
+                if args.auth == "ump"
+                else f"попробуй другой --base-url; auth={args.auth}"
             )
+            cl.add("Подсказка", "WARN", hint)
             return cl.print_summary()
 
         print_json("CREATE response", created)

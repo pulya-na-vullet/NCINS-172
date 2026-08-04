@@ -1,55 +1,48 @@
 # NCINS-143 — проверка флоу UMP (генерация/сохранение документов)
 
-Скрипт `test_ump_ncins_flow.py` делает авточасть и печатает чеклист ручных проверок в Operate.
+Скрипт: `test_ump_ncins_flow.py` (у тебя может лежать как `ump.py`).
 
-## Важно: два токена
+## Что у тебя только что произошло
 
-| Кто прислал | `--auth` | Куда ходить |
-|-------------|----------|-------------|
-| **Лид** (Яковлев) — Keycloak UMP, `nib-corp-ncins` | `ump` | `ump-application-facade` `/applications` |
-| **Разработчик** — corporate, `nib-corp-ncinsurance` | `corporate` | `corp-gateway` `/v1/applications` |
+1. `--auth ump` → токен лида **взялся нормально** (Шаг 1 OK).
+2. CREATE на `ump-application-facade.*` → **404 nginx**.
 
-Нельзя слать UMP-токен в corp-gateway → `401 Jwt issuer is not configured`.
+Значит: **токен правильный, а внешний URL facade на DEV мы угадали неверно** (сервис с твоей машины по этим host’ам не открыт / другой path).
 
-По умолчанию скрипт использует **`--auth ump`** (как сказал лид).
+По комментариям NCINS-143 создание мультизаявки в **НИБе** идёт через **corp-gateway**, не напрямую в facade.
 
-## Установка
+## Что запускать сейчас
 
 ```bash
 pip install -r requirements.txt
+
+# рабочий путь для НИБ (токен разработчика → corp-gateway)
+python ump.py --env dev --auth corporate --channel nib
 ```
 
-## Как гонять (DEV)
+Ожидай: CREATE 200/201, в ответе `id` / `number`, `channels` с `nib-corp-ncins`, дальше смотри Operate.
+
+## Два токена (не смешивать)
+
+| Кто | `--auth` | Куда |
+|-----|----------|------|
+| Разработчик (`nib-corp-ncinsurance`) | `corporate` | corp-gateway `/v1/applications` ← **create НИБ** |
+| Лид Яковлев (`nib-corp-ncins`) | `ump` | ump-application-facade `/applications` ← нужен **точный `--base-url` из Postman** |
+
+UMP-токен в corp-gateway → `401 Jwt issuer is not configured`.  
+UMP-токен на неверный host facade → `404` (твой случай).
+
+Если лид даст Postman URL facade:
 
 ```bash
-# 1) Только проверить, что токен лида берётся
-python test_ump_ncins_flow.py --env dev --auth ump --token-only
-
-# 2) Полный автопрогон НИБ (токен → create → channels → list)
-python test_ump_ncins_flow.py --env dev --auth ump --channel nib
-
-# 3) Через corp-gateway (токен разработчика)
-python test_ump_ncins_flow.py --env dev --auth corporate --channel nib
-
-# 4) Уже есть id заявки — только list + чеклист Operate
-python test_ump_ncins_flow.py --env dev --auth ump --skip-create --app-id <UUID> --app-number UMP...
+python ump.py --env dev --auth ump --channel nib --base-url "https://ПРАВИЛЬНЫЙ_ХОСТ/ump-application-facade"
 ```
 
-Стенды: `--env dev|qa|test`.
+## Прочее
 
-## Что скрипт проверяет сам
+```bash
+python ump.py --env dev --auth ump --token-only   # только проверить токен
+python ump.py --dry-run
+```
 
-1. Получение токена (PASS/FAIL)
-2. CREATE мультизаявки
-3. `channels[].code` = `nib-corp-ncins` (НИБ) или `sfa-ncins` (СФА)
-4. Чтение через `POST /applications/list` (если доступно)
-
-## Что смотреть руками в Operate (скрипт напечатает напоминание)
-
-1. Регистрация — дедуп игнорируется
-2. Prepare documents — есть `acDocuments`
-3. Mappings: `AFTER_PREPARE_DOCS`, `AFTER_SIGNING`
-4. Флоу до `/v1/ins-contracts` / generate-and-save
-5. Kafka `ump.process.to.system`
-
-Operate DEV/QA: http://operate.umpqak8sm1.moscow.alfaintra.net/
+Ручной чеклист Operate (дедуп, `acDocuments`, mappings, Kafka) скрипт печатает после успешного CREATE.
