@@ -672,12 +672,8 @@ def print_json(title: str, data: Any) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def print_kafka_payment_finished(app_id: str, env_cfg: dict[str, Any]) -> None:
-    """
-    Процесс оплаты ждёт message paymentFinished в Kafka (топик ump.process.to.system).
-    В BPMN таймаут PT5M — если не отправить, оплата уходит в Canceled/TIMEOUT.
-    """
-    payload = {
+def build_payment_finished_payload(app_id: str) -> dict[str, Any]:
+    return {
         "messageName": "paymentFinished",
         "correlationKey": f"{app_id}.NON_CREDIT_INSURANCE",
         "variables": {
@@ -685,21 +681,40 @@ def print_kafka_payment_finished(app_id: str, env_cfg: dict[str, Any]) -> None:
             "outputVariables": {},
         },
     }
+
+
+def write_kafka_payment_finished(
+    app_id: str,
+    env_cfg: dict[str, Any],
+    *,
+    out_dir: str = ".",
+) -> tuple[dict[str, Any], str]:
+    """
+    Сформировать JSON paymentFinished и сохранить в файл.
+    Процесс оплаты ждёт его в Kafka (ump.process.to.system), таймаут PT5M.
+    """
+    payload = build_payment_finished_payload(app_id)
+    out_path = f"{out_dir.rstrip('/')}/paymentFinished_{app_id}.json"
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+
     print(
         f"""
-========== KAFKA: снять стоп на «Процесс оплаты» ==========
+========== KAFKA: paymentFinished (сформировано тестом) ==========
 Топик: ump.process.to.system
 UI:    {env_cfg.get('kafka')}
 {('UI alt: ' + env_cfg['kafka_alt']) if env_cfg.get('kafka_alt') else ''}
+Файл:  {out_path}
 
-ВАЖНО: на отправку ~5 минут (PT5M в BPMN). Иначе оплата Canceled/TIMEOUT,
-финализация и GET /v1/contracts не случится.
+ВАЖНО: отправь в Produce за ~5 минут (PT5M), иначе оплата Canceled.
 
-Вставь в Produce этого топика JSON:
+JSON:
 """
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     print()
+    return payload, out_path
 
 
 def print_manual_operate_steps(app_id: str, channel: str, env_cfg: dict[str, Any]) -> None:
@@ -962,6 +977,9 @@ API base:  {auth_cfg['base_url']}
             f"id={app_id}" + (f", number={app_number}" if app_number else ""),
         )
         cl.add("Совпадение токен↔API", "PASS", f"auth={args.auth}, base={auth_cfg['base_url']}")
+        # Сразу после create — JSON paymentFinished с реальным applicationId
+        _, pf_path = write_kafka_payment_finished(app_id, env_cfg)
+        cl.add("Сформирован paymentFinished JSON", "PASS", pf_path)
 
     # --- 3. channels ---
     print("\n--- ШАГ 3. Проверить channels ---")
@@ -1074,8 +1092,9 @@ API base:  {auth_cfg['base_url']}
         )
         return cl.print_summary()
 
-    # --- 6. Kafka paymentFinished (нужно до таймаута оплаты) ---
-    print_kafka_payment_finished(app_id, env_cfg)
+    # --- 6. Kafka paymentFinished (если не напечатали сразу после create) ---
+    if args.skip_create:
+        print_kafka_payment_finished(app_id, env_cfg)
     cl.add(
         "Kafka: отправить paymentFinished",
         "MANUAL",
